@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="PYTHON_MODULE" version="4">
+  <component name="NewModuleRootManager">
+    <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$/DetectorServer" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/DetectorServer/CameraTools" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/DetectorServer/DetectorModel" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/DetectorServer/Events" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/DetectorServer/PacketModels" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/LoginServer" isTestSource="false" />
+      <excludeFolder url="file://$MODULE_DIR$/DetectorServer/DetectorModel/Models/TSSTG" />
+      <excludeFolder url="file://$MODULE_DIR$/DetectorServer/DetectorModel/Models/sppe" />
+      <excludeFolder url="file://$MODULE_DIR$/DetectorServer/DetectorModel/Models/yolo-tiny-onecls" />
+      <excludeFolder url="file://$MODULE_DIR$/DetectorServer/Results" />
+      <excludeFolder url="file://$MODULE_DIR$/venv" />
+    </content>
+    <orderEntry type="jdk" jdkName="Python 3.9 (venv) (5)" jdkType="Python SDK" />
+    <orderEntry type="sourceFolder" forTests="false" />
+  </component>
+  <component name="PackageRequirementsSettings">
+    <option name="removeUnused" value="true" />
+  </component>
+  <component name="PyNamespacePackagesService">
+    <option name="namespacePackageFolders">
+      <list>
+        <option value="$MODULE_DIR$/DetectorServer" />
+      </list>
+    </option>
+  </component>
+</module>

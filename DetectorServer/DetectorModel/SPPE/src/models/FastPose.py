@@ -1,7 +1,7 @@
 import torch.nn as nn
-from DetectorServer.DetectorModel.SPPE.src.opt import opt
 from torch.autograd import Variable
 
+from DetectorServer.DetectorModel.SPPE.src.opt import opt
 from .layers.DUC import DUC
 from .layers.SE_Resnet import SEResnet
 

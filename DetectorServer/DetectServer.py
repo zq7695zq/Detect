@@ -1,5 +1,7 @@
 import configparser
+import socket
 import time
+from enum import Enum
 from threading import Thread
 
 from fastapi import FastAPI, Request
@@ -15,8 +17,47 @@ from PacketModels.Models import ModelDetector, ModelAddDetector, ModelCam2Events
 from Token import Token
 
 
-class Detector_Controller:
+class detector_state(Enum):
+    running = 1
+    wait_to_stop = 2
+    stoped = 3
 
+    def __init__(self, type):
+        pass
+
+
+def check_rtsp_connectivity(address):
+    # 解析地址中的主机和端口
+    rtsp_host = address.split("//")[1].split(":")[0]
+    rtsp_port = int(address.split("//")[1].split(":")[1].split("/")[0])
+    # 创建一个socket对象
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    # 尝试连接到rtsp服务器
+    try:
+        s.connect((rtsp_host, rtsp_port))
+        # 定义一个rtsp请求的消息
+        message = "OPTIONS " + address + " RTSP/1.0\r\nCSeq: 1\r\nUser-Agent: Python\r\n\r\n"
+        # 发送请求
+        s.send(message.encode())
+        # 接收响应
+        response = s.recv(1024)
+        # 判断响应是否为200 OK
+        if response.decode().startswith("RTSP/1.0 200 OK"):
+            # 返回True表示连通
+            return True
+        else:
+            # 返回False表示不连通
+            return False
+    except Exception as e:
+        # 如果发生异常，返回False表示不连通
+        return False
+    finally:
+        # 关闭socket
+        s.close()
+
+
+class Detector_Controller:
     def __init__(self, detectors, redis, models):
 
         self.redis = redis
@@ -31,30 +72,73 @@ class Detector_Controller:
 
         self.show_threshold = 25  # 展示动作的阈值 25%
 
-        for d in self.detectors:
-            self.append_detector(d)
+        self.retest_interval_time = 3  # 连通性测试失败时重新测试间隔,
 
-    def append_detector(self, d):
-        detector = Detector(d["cam_source"], EventSaver(d["cam_source"], self.redis), self.models,
-                            self.interval_time, self.show_threshold)
-        self.detectors_thread[d["cam_source"]] = Thread(target=self.update_thread, args=(detector, d["cam_source"]),
-                                                        daemon=True).start()
+        self.restart_interval_time = 10  # 重启线程间隔
+
+        self.running_cam = {}
+
+        for d in self.detectors:
+            Thread(target=self.append_detector, args=(d, 1), daemon=True).start()
+
+    def append_detector(self, d, count):
+        while True:
+            if count > 30:
+                print("地址：%s 测试连接超过30次，停止测试..." % (d["cam_source"]))
+                return
+            elif count > 1:
+                print("地址：%s 第%s次测试连通性中..." % (d["cam_source"], count))
+
+            if check_rtsp_connectivity(d["cam_source"]):
+                detector = Detector(d["cam_source"], EventSaver(d["cam_source"], self.redis), self.models,
+                                    self.restart_detector,
+                                    self.interval_time, self.show_threshold)
+                self.detectors_thread[d["cam_source"]] = {
+                    'thread': Thread(target=self.update_thread, args=(detector, d["cam_source"]),
+                                     daemon=True),
+                    'state': detector_state.running,
+                    'detector': detector,
+                    'test_time': 0
+                }
+                self.detectors_thread[d["cam_source"]]["thread"].start()
+
+                if self.detectors_thread[d["cam_source"]]["detector"].available:
+                    print("%s连接成功... " % d["cam_source"])
+                    self.running_cam[d["cam_source"]] = True
+                    return
+
+            print("地址：%s 第%s次测试连通性失败，三分钟后重新测试" % (d["cam_source"], count))
+            count += 1
+            time.sleep(self.retest_interval_time)
+
+    def restart_detector(self, detector: Detector, isStarted: bool):
+        if isStarted:
+            self.running_cam.pop(detector.cam_source)
+            # 关闭线程
+            self.detectors_thread[detector.cam_source]['state'] = detector_state.wait_to_stop
+        print('restart_detector : ', detector.cam_source)
+        self.append_detector({'cam_source': detector.cam_source}, 1)
 
     def update_thread(self, detector, cam_source):
         crycle_count = 0
         while True:
+            if self.detectors_thread[cam_source]['state'] == detector_state.wait_to_stop:
+                self.detectors_thread[cam_source]['state'] = detector_state.stoped
+                print("%s 断开连接，" % [cam_source])
+                return
+
             time_start = time.time()
             ret = detector.detect_frame()
             # print("detecting on :" + cam_source + "  event:" + str(ret["event"]))
-            # 每一百次侦察记录一次帧（充当封面）
+            # 每一百帧记录一次帧（充当封面）
             if crycle_count % 100 == 0:
                 self.redis.set_norm_frame(cam_source, ret['origin_frame'])
 
-            if not detector.is_available():
-                # 重新启动
-                self.detectors_thread[cam_source] = Thread(target=self.update_thread,
-                                                           args=(detector, cam_source), daemon=True).start()
-                break
+            # if not detector.is_available():
+            #     # 重新启动
+            #     self.detectors_thread[cam_source] = Thread(target=self.update_thread,
+            #                                                args=(detector, cam_source), daemon=True).start()
+            #     break
             # print("run_time:" + str(time.time() - time_start))
             crycle_count += 1
             time.sleep(self.interval_time)
@@ -125,6 +209,8 @@ class DetectServer(FastAPI):
                     d['image'] = self.redis.get_last_norm_base64(d['cam_source'])
                     events = self.redis.get_events_by_source(d['cam_source'])
                     d['state'] = "warning" if len(events) > 0 else "norm"
+                    if not d['cam_source'] in self.detector_controller.running_cam:
+                        d['state'] = "death"
                 ret['detectors'] = detectors
             return ret
 

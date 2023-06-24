@@ -11,13 +11,21 @@ from Events.Event import Event
 
 
 class Detector:
-    def __init__(self, cam_source, evnet_saver, models, interval_time=5, show_threshold=25):
+    def __init__(self, cam_source, evnet_saver, models, restart_callback, interval_time=5, show_threshold=25):
         self.models = models
 
-        self.available = True
+        self.started = False  # 是否已经完整走完init
+
+        self.available = True  # 是否已经正常启动
+
+        self.cam_source = cam_source
+
+        self.restart_callback = restart_callback
 
         self.cam = CamLoader_Q(cam_source, self.error_callback, interval_time, queue_size=256,
                                preprocess=self.preproc).start()
+
+        self.available = not self.cam.stopped
 
         self.fps_time = 0
 
@@ -25,9 +33,18 @@ class Detector:
 
         self.show_threshold = show_threshold
 
+        self.started = True
+
     def error_callback(self, error):
         self.available = False
-        print(error)
+        print("error_callback", error)
+        try:
+            # 如果还没走完init不回调（回调会执行重新启动），通过启动者通过available观察是否已经成功启动
+            # 而如果已经走完init，证明摄像头前N帧已经获取到，但是后面断开了，则回调->重启启动
+            if self.started:
+                self.restart_callback(self, self.started)
+        except Exception as e:
+            print("error_callback", "unk error", e)
 
     def is_available(self):
         return self.available

@@ -101,14 +101,16 @@ class CamLoader_Q:
         self.camera_source = camera
         self.stream = cv2.VideoCapture(camera)
         if self.stream.isOpened() == False:
-            error_callback('Cannot read camera source! cam_source : ' + camera)
+            self.error_callback("地址：%s Cannot read camera source!" % camera)
+            self.stopped = True
+        else:
+            self.stopped = False
         self.fps = self.stream.get(cv2.CAP_PROP_FPS)
         self.frame_size = (int(self.stream.get(cv2.CAP_PROP_FRAME_WIDTH)),
                            int(self.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)))
 
         # Queue for storing each frames.
 
-        self.stopped = False
         self.paused = False
 
         self.batch_size = batch_size
@@ -118,14 +120,18 @@ class CamLoader_Q:
         self.interval_time = interval_time
 
     def start(self):
+        if self.stopped:
+            return self
         t = Thread(target=self.update, args=(), daemon=True).start()
         c = 0
         while not self.grabbed():
             time.sleep(0.5)
             c += 1
-            if c > 50:
+            if c > 20:
                 self.stop()
-                raise TimeoutError('Can not get a frame from camera!!!')
+                # self.error_callback('Can not get a frame from camera! cam_source : ' + self.camera_source)
+                return self
+                # raise TimeoutError('Can not get a frame from camera!!!')
         return self
 
     def update(self):
@@ -136,6 +142,7 @@ class CamLoader_Q:
                     ret, frame = self.stream.read()
                     if not ret:
                         self.stop()
+                        self.error_callback('camera stop! cam_source : ' + self.camera_source)
                         return
 
                     if self.preprocess_fn is not None:

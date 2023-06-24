@@ -154,9 +154,9 @@ class mysql_db_detector():
                 # 准备SQL语句
                 sql = """
                 SELECT * FROM detector
-                WHERE detector.id = 
-                    (SELECT detector_id FROM detector_server
-                    WHERE server_id = %s)
+                    JOIN detector_server
+                    ON detector.id = detector_server.detector_id
+                    WHERE server_id = %s
                 """
                 # 执行SQL语句
                 cursor.execute(sql, [server_id])

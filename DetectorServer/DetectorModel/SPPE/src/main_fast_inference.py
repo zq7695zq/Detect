@@ -5,6 +5,7 @@ import torch._utils
 import torch.nn as nn
 import torch.utils.data
 import torch.utils.data.distributed
+
 from .models.FastPose import FastPose
 from .utils.img import flip, shuffleLR
 

@@ -2,10 +2,11 @@ import random
 
 import numpy as np
 import torch
-from DetectorServer.DetectorModel.SPPE.src.opt import opt
 from utils import getPrediction
 from utils import (load_image, drawGaussian, drawBigCircle, drawSmallCircle, cv_rotate,
                    cropBox, transformBox, flip, shuffleLR, drawCOCO)
+
+from DetectorServer.DetectorModel.SPPE.src.opt import opt
 
 
 def rnd(x):

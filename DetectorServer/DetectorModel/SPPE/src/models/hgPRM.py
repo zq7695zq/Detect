@@ -2,9 +2,9 @@ import math
 
 import torch
 import torch.nn as nn
-from DetectorServer.DetectorModel.SPPE.src.opt import opt
 from torch.autograd import Variable
 
+from DetectorServer.DetectorModel.SPPE.src.opt import opt
 from .layers.PRM import Residual as ResidualPyramid
 from .layers.Residual import Residual as Residual
 

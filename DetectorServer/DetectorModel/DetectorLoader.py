@@ -5,6 +5,7 @@ from threading import Thread
 import numpy as np
 import torch
 import torchvision.transforms as transforms
+
 from Detection.Models import Darknet
 from Detection.Utils import non_max_suppression, ResizePadding
 

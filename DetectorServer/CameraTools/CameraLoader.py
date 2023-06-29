@@ -100,7 +100,7 @@ class CamLoader_Q:
         self.error_callback = error_callback
         self.camera_source = camera
         self.stream = cv2.VideoCapture(camera)
-        if self.stream.isOpened() == False:
+        if not self.stream.isOpened():
             self.error_callback("地址：%s Cannot read camera source!" % camera)
             self.stopped = True
         else:

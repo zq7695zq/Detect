@@ -5,6 +5,7 @@ from hypercorn.asyncio import serve
 from hypercorn.config import Config
 
 from LoginServer import LoginServer
+from WeChat.WeChatServer import WeChatServer
 
 # def show_images():
 #

@@ -90,3 +90,20 @@ class redis_tool:
     def get_last_norm_base64(self, cam_source):
         r = redis.Redis(connection_pool=self.pool)
         return r.get("cam_source_norm_frame_" + cam_source)
+
+    def add_notification(self, cam_source, event):
+        r = redis.Redis(connection_pool=self.pool)
+        e_dict = {
+            'event': event.value,
+            'time': str(time.time()),
+            'name': str(uuid.uuid4()),
+        }
+        r.set("cam_source_notification_" + cam_source, str(e_dict))
+
+    def get_notification(self, cam_source):
+        r = redis.Redis(connection_pool=self.pool)
+        return self.strToEvent(r.get("cam_source_notification_" + cam_source))
+
+    def del_notification(self, cam_source):
+        r = redis.Redis(connection_pool=self.pool)
+        r.delete("cam_source_notification_" + cam_source)

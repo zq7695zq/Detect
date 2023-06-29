@@ -1,12 +1,13 @@
 import configparser
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
 from Database import db_state, mysql_db_detector
-from PacketModels.Models import ModelLogin, ModelRegister
+from PacketModels.Models import ModelLogin, ModelRegister, ModelAuthentication
 from Token import Token
 
+import hashlib
 
 class LoginServer(FastAPI):
 
@@ -20,11 +21,14 @@ class LoginServer(FastAPI):
 
         self.Token = Token(config.get("token", "secret_key"))
 
-        self.detector_servers = []
+        self.media_mtx = dict(config.items("media_mtx"))
 
-        self.db.server_get_all(self.detector_servers)
         print("加载loginserver成功")
-        print("detector_servers:", self.detector_servers)
+        # self.detector_servers = []
+        #
+        # self.db.server_get_all(self.detector_servers)
+        #
+        # print("detector_servers:", self.detector_servers)
 
         @self.middleware("http")
         async def process_token(request: Request, call_next):
@@ -86,3 +90,10 @@ class LoginServer(FastAPI):
                 # ret['token'] = self.Token.generate_token({'username': m.username, 'password': m.password})
                 pass
             return ret
+
+        @self.post('/rtsp_reader')
+        async def rtsp_reader(m: ModelAuthentication):
+            print(m)
+            if m.user == self.media_mtx['readUser'] and m.password == self.media_mtx['readPass']:
+                return {"status_code": status.HTTP_200_OK}
+            return {"status_code": status.HTTP_}

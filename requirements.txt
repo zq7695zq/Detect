@@ -12,3 +12,6 @@ matplotlib~=3.7.1
 scipy~=1.10.1
 tqdm~=4.65.0
 torchvision~=0.15.2+cu118
+starlette~=0.27.0
+crypto~=1.4.1
+requests~=2.28.1

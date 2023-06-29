@@ -36,7 +36,7 @@ class db_state(Enum):
         return str(self).replace('db_state.', '')
 
 
-class mysql_db_detector():
+class mysql_db_detector:
 
     def __init__(self, config):
         # 创建连接池

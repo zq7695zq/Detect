@@ -10,4 +10,7 @@ class Event(Enum):
     standing = 5
 
     def __init__(self, type):
-        pass
+        self.confi = 0
+
+    def set_confidence(self, c):
+        self.confi = str(c)

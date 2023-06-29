@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 import torch
 
+import NotificationSender
 from CameraTools.CameraLoader import CamLoader_Q
 from DetectorModel.Track.Tracker import Detection
 from DetectorModel.fn import draw_single
@@ -11,7 +12,7 @@ from Events.Event import Event
 
 
 class Detector:
-    def __init__(self, cam_source, evnet_saver, models, restart_callback, interval_time=5, show_threshold=25):
+    def __init__(self, cam_source, owner, event_saver, models, restart_callback, interval_time=5, show_threshold=25):
         self.models = models
 
         self.started = False  # 是否已经完整走完init
@@ -19,6 +20,8 @@ class Detector:
         self.available = True  # 是否已经正常启动
 
         self.cam_source = cam_source
+
+        self.owner = owner
 
         self.restart_callback = restart_callback
 
@@ -29,7 +32,7 @@ class Detector:
 
         self.fps_time = 0
 
-        self.evnet_saver = evnet_saver
+        self.event_saver = event_saver
 
         self.show_threshold = show_threshold
 
@@ -102,13 +105,13 @@ class Detector:
             if len(track.keypoints_list) == 30:
                 pts = np.array(track.keypoints_list, dtype=np.float32)
                 out = self.models.action_model.predict(pts, frame.shape[:2])
+                # 可信度大于阈值才处理
                 if out[0].max() * 100 > self.show_threshold:
                     action_name = self.models.action_model.class_names[out[0].argmax()]
                     action = '{}: {:.2f}%'.format(action_name, out[0].max() * 100)
                     if action_name == 'Fall Down':
                         clr = (255, 0, 0)
                         event = Event(Event.fall_down)
-                        print(event)
                     elif action_name == 'Lying Down':
                         clr = (255, 200, 0)
                         event = Event(Event.lying_down)
@@ -121,10 +124,10 @@ class Detector:
                     elif action_name == 'Standing':
                         clr = (255, 100, 255)
                         event = Event(Event.standing)
-
+                    event.set_confidence(out[0].max() * 100)
                     # 发生事件处理
                     if event == event.fall_down:
-                        self.evnet_saver.addEvent(event, track.frame_list)
+                        self.event_saver.addEvent(event, track.frame_list)
 
                     show = True
 
@@ -140,7 +143,8 @@ class Detector:
 
         # Show Frame.
         # frame = cv2.resize(frame, (0, 0), fx=2., fy=2.)
-        frame = cv2.putText(frame, '%d, FPS: %f' % (f, 1.0 / (time.time() - self.fps_time)),
+        fps_t = (time.time() - self.fps_time)
+        frame = cv2.putText(frame, '%d, FPS: %f' % (f, 1.0 / fps_t if fps_t != 0 else 1),
                             (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
         frame = frame[:, :, ::-1]
         self.fps_time = time.time()

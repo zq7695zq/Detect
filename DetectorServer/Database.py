@@ -131,10 +131,10 @@ class mysql_db_detector():
                 # 执行完SQL语句后的返回结果都是保存在cursor中
                 # 所以要从cursor中获取全部数据
                 datas = cursor.fetchall()
-                # 查出当前查询的列名，保存到coloums
-                coloums = [column[0] for column in cursor.description]
+                # 查出当前查询的列名，保存到columns
+                columns = [column[0] for column in cursor.description]
                 for row in datas:
-                    ret.append(dict(zip(coloums, row)))
+                    ret.append(dict(zip(columns, row)))
         except Exception as e:
             print("detector_get_all-数据库操作异常：\n", e)
         finally:
@@ -163,10 +163,10 @@ class mysql_db_detector():
                 # 执行完SQL语句后的返回结果都是保存在cursor中
                 # 所以要从cursor中获取全部数据
                 datas = cursor.fetchall()
-                # 查出当前查询的列名，保存到coloums
-                coloums = [column[0] for column in cursor.description]
+                # 查出当前查询的列名，保存到columns
+                columns = [column[0] for column in cursor.description]
                 for row in datas:
-                    ret.append(dict(zip(coloums, row)))
+                    ret.append(dict(zip(columns, row)))
         except Exception as e:
             print("detector_get_by_server-数据库操作异常：\n", e)
         finally:
@@ -195,10 +195,10 @@ class mysql_db_detector():
                 # 执行完SQL语句后的返回结果都是保存在cursor中
                 # 所以要从cursor中获取全部数据
                 datas = cursor.fetchall()
-                # 查出当前查询的列名，保存到coloums
-                coloums = [column[0] for column in cursor.description]
+                # 查出当前查询的列名，保存到columns
+                columns = [column[0] for column in cursor.description]
                 for row in datas:
-                    ret.append(dict(zip(coloums, row)))
+                    ret.append(dict(zip(columns, row)))
         except Exception as e:
             print("detector_get_by_owner-数据库操作异常：\n", e)
         finally:
@@ -330,10 +330,10 @@ class mysql_db_detector():
                 # 执行完SQL语句后的返回结果都是保存在cursor中
                 # 所以要从cursor中获取全部数据
                 datas = cursor.fetchall()
-                # 查出当前查询的列名，保存到coloums
-                coloums = [column[0] for column in cursor.description]
+                # 查出当前查询的列名，保存到columns
+                columns = [column[0] for column in cursor.description]
                 for row in datas:
-                    ret.update(dict(zip(coloums, row)))
+                    ret.update(dict(zip(columns, row)))
         except Exception as e:
             print("user_get_user-数据库操作异常：\n", e)
         finally:
@@ -381,10 +381,10 @@ class mysql_db_detector():
                 # 执行完SQL语句后的返回结果都是保存在cursor中
                 # 所以要从cursor中获取全部数据
                 datas = cursor.fetchall()
-                # 查出当前查询的列名，保存到coloums
-                coloums = [column[0] for column in cursor.description]
+                # 查出当前查询的列名，保存到columns
+                columns = [column[0] for column in cursor.description]
                 for row in datas:
-                    ret.update(dict(zip(coloums, row)))
+                    ret.update(dict(zip(columns, row)))
         except Exception as e:
             print("server_get_by_user_id-数据库操作异常：\n", e)
         finally:
@@ -410,10 +410,10 @@ class mysql_db_detector():
                 # 执行完SQL语句后的返回结果都是保存在cursor中
                 # 所以要从cursor中获取全部数据
                 datas = cursor.fetchall()
-                # 查出当前查询的列名，保存到coloums
-                coloums = [column[0] for column in cursor.description]
+                # 查出当前查询的列名，保存到columns
+                columns = [column[0] for column in cursor.description]
                 for row in datas:
-                    ret.append(dict(zip(coloums, row)))
+                    ret.append(dict(zip(columns, row)))
         except Exception as e:
             print("detector_get_all-数据库操作异常：\n", e)
         finally:
@@ -441,10 +441,10 @@ class mysql_db_detector():
                 # 执行完SQL语句后的返回结果都是保存在cursor中
                 # 所以要从cursor中获取全部数据
                 datas = cursor.fetchall()
-                # 查出当前查询的列名，保存到coloums
-                coloums = [column[0] for column in cursor.description]
+                # 查出当前查询的列名，保存到columns
+                columns = [column[0] for column in cursor.description]
                 for row in datas:
-                    ret.update(dict(zip(coloums, row)))
+                    ret.update(dict(zip(columns, row)))
         except Exception as e:
             print("server_get_users_by_server_id-数据库操作异常：\n", e)
         finally:
@@ -477,3 +477,56 @@ class mysql_db_detector():
             cursor.close()
             conn.close()
             return count
+
+    def user_is_bound(self, user_id):
+        is_bound = False
+        conn = self.pool.connection()
+        # 打开数据库可能会有风险，所以添加异常捕捉
+        try:
+            with conn.cursor() as cursor:
+                # 准备SQL语句
+                sql = "select * from wechat where user_id = %s"
+                # 执行SQL语句
+                cursor.execute(sql, [user_id])
+                # 执行完SQL语句后的返回结果都是保存在cursor中
+                # 所以要从cursor中获取全部数据
+                datas = cursor.fetchall()
+                is_bound = len(datas) > 0
+        except Exception as e:
+            print("wechat_user_is_user_is_bound-数据库操作异常：\n", e)
+        finally:
+            cursor.close()
+            conn.close()
+            return is_bound
+
+    def user_get_bound(self, user_id, ret):
+        if not self.user_is_bound(user_id):
+            return False
+        conn = self.pool.connection()
+        # 打开数据库可能会有风险，所以添加异常捕捉
+        try:
+            with conn.cursor() as cursor:
+                # 准备SQL语句
+                sql = """
+                SELECT * FROM wechat
+                WHERE user_id = %s
+                """
+                # 执行SQL语句
+                cursor.execute(sql, [user_id])
+                # 执行完SQL语句后的返回结果都是保存在cursor中
+                # 所以要从cursor中获取全部数据
+                datas = cursor.fetchall()
+                # 查出当前查询的列名，columns
+                columns = [column[0] for column in cursor.description]
+                for row in datas:
+                    ret.update(dict(zip(columns, row)))
+        except Exception as e:
+            print("user_get_bound-数据库操作异常：\n", e)
+        finally:
+            # 不管成功还是失败，都要关闭数据库连接
+            cursor.close()
+            conn.close()
+            if len(datas) == 0:
+                return False
+            else:
+                return True

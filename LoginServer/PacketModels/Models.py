@@ -32,3 +32,16 @@ class ModelGetEventFrames(BaseModel):
 class ModelDelEvent(BaseModel):
     event_name: str
     cam_source: str
+
+class ModelGetNotification(BaseModel):
+    cam_source: str
+
+class ModelAuthentication(BaseModel):
+    ip: str
+    user: str
+    password: str
+    path: str
+    protocol: str
+    id: str
+    action: str
+    query: str

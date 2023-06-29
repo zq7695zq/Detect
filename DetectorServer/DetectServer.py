@@ -11,10 +11,13 @@ import RedisTool
 from Database import db_state, mysql_db_detector
 from Detector import Detector
 from DetectorModel.ModelsLoader import ModelsLoader
+from Event import Event
 from Events.EventSaver import EventSaver
+from NotificationSender import NotiSender
 from PacketModels.Models import ModelDetector, ModelAddDetector, ModelCam2Events, \
-    ModelGetEventFrames, ModelDelEvent
+    ModelGetEventFrames, ModelDelEvent, ModelGetNotification
 from Token import Token
+from WeChat.Database import mysql_db_wechat
 
 
 class detector_state(Enum):
@@ -58,7 +61,7 @@ def check_rtsp_connectivity(address):
 
 
 class Detector_Controller:
-    def __init__(self, detectors, redis, models):
+    def __init__(self, detectors, redis, models, db):
 
         self.redis = redis
 
@@ -66,11 +69,13 @@ class Detector_Controller:
 
         self.detectors = detectors
 
+        self.db = db
+
         self.interval_time = 0  # 0.01秒检测一次
 
         self.detectors_thread = {}
 
-        self.show_threshold = 25  # 展示动作的阈值 25%
+        self.show_threshold = 20  # 展示动作的阈值 20%
 
         self.retest_interval_time = 3  # 连通性测试失败时重新测试间隔,
 
@@ -90,7 +95,10 @@ class Detector_Controller:
                 print("地址：%s 第%s次测试连通性中..." % (d["cam_source"], count))
 
             if check_rtsp_connectivity(d["cam_source"]):
-                detector = Detector(d["cam_source"], EventSaver(d["cam_source"], self.redis), self.models,
+                detector = Detector(d["cam_source"],
+                                    d['owner'],
+                                    EventSaver(d["cam_source"], self.redis, d['owner'], self.db),
+                                    self.models,
                                     self.restart_detector,
                                     self.interval_time, self.show_threshold)
                 self.detectors_thread[d["cam_source"]] = {
@@ -117,7 +125,7 @@ class Detector_Controller:
             # 关闭线程
             self.detectors_thread[detector.cam_source]['state'] = detector_state.wait_to_stop
         print('restart_detector : ', detector.cam_source)
-        self.append_detector({'cam_source': detector.cam_source}, 1)
+        self.append_detector({'cam_source': detector.cam_source, 'owner': detector.owner}, 1)
 
     def update_thread(self, detector, cam_source):
         crycle_count = 0
@@ -166,7 +174,7 @@ class DetectServer(FastAPI):
         self.detectors = []
         self.db.detector_get_by_server(self.server_id, self.detectors)
 
-        self.detector_controller = Detector_Controller(self.detectors, self.redis, ModelsLoader())
+        self.detector_controller = Detector_Controller(self.detectors, self.redis, ModelsLoader(), self.db)
 
         print("DetectorServer加载完成")
         print("detectors : ", self.detectors)
@@ -227,7 +235,7 @@ class DetectServer(FastAPI):
                 pass
             elif state == db_state.detector_add_success:
                 self.detectors.append(new_detector)
-                self.detector_controller.append_detector(new_detector)
+                self.detector_controller.append_detector(new_detector, 1)
                 pass
             return ret
 
@@ -251,4 +259,21 @@ class DetectServer(FastAPI):
         async def del_event(request: Request, m: ModelDelEvent):
             # todo 检查用户符合
             ret = {'state': 'del_event_success', 'events': self.redis.del_event(m.event_name, m.cam_source)}
+            return ret
+
+        @self.post('/get_notification')
+        async def get_notification(request: Request, m: ModelGetNotification):
+            # todo 检查用户符合
+            noti = self.redis.get_notification(m.cam_source)
+            state = 1 if noti is not None else 0
+            notification = ""
+            if state == 1:
+                # 阅后即焚
+                self.redis.del_notification(m.cam_source)
+                notification = noti["event"].name
+            ret = {
+                'notification': notification,
+                'state': state,
+                }
+            #
             return ret

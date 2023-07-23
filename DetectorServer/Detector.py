@@ -1,4 +1,5 @@
 import time
+from collections import deque
 
 import cv2
 import numpy as np
@@ -36,6 +37,10 @@ class Detector:
 
         self.show_threshold = show_threshold
 
+        self.stream_opened = False
+
+        self.post_frames = deque(maxlen=120)
+
         self.started = True
 
     def error_callback(self, error):
@@ -51,6 +56,14 @@ class Detector:
 
     def is_available(self):
         return self.available
+
+    def open_stream(self):
+        self.post_frames.clear()
+        self.stream_opened = True
+
+    def close_stream(self):
+        self.post_frames.clear()
+        self.stream_opened = False
 
     def detect_frame(self):
         f = 0
@@ -100,7 +113,6 @@ class Detector:
 
             action = 'pending..'
             clr = (0, 255, 0)
-            show = False
             # Use 30 frames time-steps to prediction.
             if len(track.keypoints_list) == 30:
                 pts = np.array(track.keypoints_list, dtype=np.float32)
@@ -129,10 +141,8 @@ class Detector:
                     if event == event.fall_down:
                         self.event_saver.addEvent(event, track.frame_list)
 
-                    show = True
-
             # VISUALIZE.
-            if track.time_since_update == 0 and show:
+            if track.time_since_update == 0:
                 if self.models.args.show_skeleton:
                     frame = draw_single(frame, track.keypoints_list[-1])
                 frame = cv2.rectangle(frame, (bbox[0], bbox[1]), (bbox[2], bbox[3]), (0, 255, 0), 1)
@@ -141,6 +151,10 @@ class Detector:
                 frame = cv2.putText(frame, action, (bbox[0] + 5, bbox[1] + 15), cv2.FONT_HERSHEY_COMPLEX,
                                     0.4, clr, 1)
 
+        if self.stream_opened:
+            buffer = cv2.imencode(".jpg", frame)[1]
+            print("append size:" + str(len(buffer)))
+            self.post_frames.append(buffer)
         # Show Frame.
         # frame = cv2.resize(frame, (0, 0), fx=2., fy=2.)
         fps_t = (time.time() - self.fps_time)

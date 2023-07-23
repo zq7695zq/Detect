@@ -140,6 +140,7 @@ class Tracker:
         ----------
         detections : List[deep_sort.detection.Detection]
             A list of detections at the current time step.
+        frame : ```
         """
         # Run matching cascade.
         matches, unmatched_tracks, unmatched_detections = self._match(detections)
@@ -186,5 +187,5 @@ class Tracker:
         if detection.confidence < 0.4:
             return
         mean, covariance = self.kf.initiate(detection.to_xyah())
-        self.tracks.append(Track(mean, covariance, self._next_id, self.n_init, self.max_age))
+        self.tracks.append(Track(mean, covariance, self._next_id, self.n_init, self.max_age, self.max_age))
         self._next_id += 1

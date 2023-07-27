@@ -32,3 +32,12 @@ class ModelGetEventFrames(BaseModel):
 class ModelDelEvent(BaseModel):
     event_name: str
     cam_source: str
+
+
+class ModelAddReminder(BaseModel):
+    cam_source: str
+    frame: str
+    rect: list
+    select_time: str
+    reminder_name: str
+    reminder_type: int

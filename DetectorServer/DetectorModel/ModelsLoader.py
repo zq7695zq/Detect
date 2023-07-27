@@ -4,6 +4,7 @@ from ActionsEstLoader import TSSTG
 from Detection.Utils import ResizePadding
 from DetectorLoader import TinyYOLOv3_onecls
 from PoseEstimateLoader import SPPE_FastPose
+from PysotModel import PysotModel
 from Track.Tracker import Tracker
 
 
@@ -49,3 +50,7 @@ class ModelsLoader:
         self.action_model = TSSTG()
 
         self.resize_fn = ResizePadding(self.input_size_dets, self.input_size_dets)
+
+        # ItemTracker
+        self.pysot_model = PysotModel()
+

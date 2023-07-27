@@ -1,3 +1,4 @@
+import threading
 import time
 from collections import deque
 
@@ -10,6 +11,10 @@ from CameraTools.CameraLoader import CamLoader_Q
 from DetectorModel.Track.Tracker import Detection
 from DetectorModel.fn import draw_single
 from Events.Event import Event
+from RectTracker import RectTracker
+
+from MoveReminder import MoveReminder
+from PostFramesController import PostFramesController
 
 
 class Detector:
@@ -37,11 +42,15 @@ class Detector:
 
         self.show_threshold = show_threshold
 
-        self.stream_opened = False
-
-        self.post_frames = deque(maxlen=120)
-
         self.started = True
+
+        # self.post_frames_con = PostFramesController()
+
+        self.rect_tracker = RectTracker(self.models.pysot_model)
+
+        # 物品超时和区域警报
+        self.reminders = []
+        self.reminder_lock = threading.Lock()
 
     def error_callback(self, error):
         self.available = False
@@ -57,20 +66,16 @@ class Detector:
     def is_available(self):
         return self.available
 
-    def open_stream(self):
-        self.post_frames.clear()
-        self.stream_opened = True
-
-    def close_stream(self):
-        self.post_frames.clear()
-        self.stream_opened = False
-
     def detect_frame(self):
         f = 0
         frame = self.cam.getitem()
         origin_frame = np.copy(frame)
         # Detect humans bbox in the frame with detector model.
         detected = self.models.detect_model.detect(frame, need_resize=False, expand_bb=10)
+
+        detected_bbox = []
+        if detected is not None:
+            detected_bbox = self.convert_to_bbox_array(detected)
 
         # Predict each tracks bbox of current frame from previous frames information with Kalman filter.
         self.models.tracker.predict()
@@ -80,6 +85,7 @@ class Detector:
             detected = torch.cat([detected, det], dim=0) if detected is not None else det
 
         detections = []  # List of Detections object for tracking.
+
         if detected is not None:
             # detected = non_max_suppression(detected[None, :], 0.45, 0.2)[0]
             # Predict skeleton pose of each bboxs.
@@ -96,10 +102,17 @@ class Detector:
                 for bb in detected[:, 0:5]:
                     frame = cv2.rectangle(frame, (bb[0], bb[1]), (bb[2], bb[3]), (0, 0, 255), 1)
 
+        # 物品追踪
+        if self.rect_tracker.tracker_inited:
+            ret_rect = self.rect_tracker.track_frame(origin_frame, frame)
+            self.reminder_lock.acquire()
+            for rt in self.reminders:
+                frame = rt.track_frame(frame, ret_rect, detected_bbox)
+            self.reminder_lock.release()
+
         # Update tracks by matching each track information of current and previous frame or
         # create a new track if no matched.
         self.models.tracker.update(detections, frame)
-
         event = Event(Event.pending)
 
         # Predict Actions of each track.
@@ -151,17 +164,24 @@ class Detector:
                 frame = cv2.putText(frame, action, (bbox[0] + 5, bbox[1] + 15), cv2.FONT_HERSHEY_COMPLEX,
                                     0.4, clr, 1)
 
-        if self.stream_opened:
-            buffer = cv2.imencode(".jpg", frame)[1]
-            print("append size:" + str(len(buffer)))
-            self.post_frames.append(buffer)
+        # if self.post_frames_con.stream_opened and not self.post_frames_con.post_frames_lock.locked():
+        #     buffer = cv2.imencode(".jpg", frame)[1]
+        #     self.post_frames_con.post_frames_lock.acquire()
+        #     self.post_frames_con.add_stream_frame(buffer)
+        #     self.post_frames_con.post_frames_lock.release()
+        #     if self.post_frames_con.check_out_of_time():
+        #         self.post_frames_con.clear_steam()
         # Show Frame.
         # frame = cv2.resize(frame, (0, 0), fx=2., fy=2.)
         fps_t = (time.time() - self.fps_time)
         frame = cv2.putText(frame, '%d, FPS: %f' % (f, 1.0 / fps_t if fps_t != 0 else 1),
                             (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-        frame = frame[:, :, ::-1]
+        # frame = frame[:, :, ::-1]
+        # 是否直播推流
+        if self.cam.stream_live.stream_opened and self.cam.stream_live.check_out_of_time():
+            self.cam.stream_live.write_frame(frame)
         self.fps_time = time.time()
+        # print(fps_t)
         return {"event": event, "frame": frame, "origin_frame": origin_frame}
         # cv2.imwrite("./Results/img-" + str(time.time()) + ".jpg", frame)
 
@@ -210,3 +230,7 @@ class Detector:
         """
         return np.array((kpt[:, 0].min() - ex, kpt[:, 1].min() - ex,
                          kpt[:, 0].max() + ex, kpt[:, 1].max() + ex))
+
+    def convert_to_bbox_array(self, detected_objects):
+        return [(obj[1].item(), obj[0].item(), (obj[3] - obj[1]).item()
+                 , (obj[2] - obj[0]).item()) for obj in detected_objects]

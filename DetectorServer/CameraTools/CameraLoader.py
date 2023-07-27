@@ -5,6 +5,8 @@ from threading import Thread, Lock
 import cv2
 import numpy as np
 
+from StreamLive import StreamLive
+
 
 class CamLoader:
     """Use threading to capture a frame from camera for faster frame load.
@@ -100,6 +102,9 @@ class CamLoader_Q:
         self.error_callback = error_callback
         self.camera_source = camera
         self.stream = cv2.VideoCapture(camera)
+
+        self.stream_live = StreamLive()
+
         if not self.stream.isOpened():
             self.error_callback("地址：%s Cannot read camera source!" % camera)
             self.stopped = True
@@ -184,6 +189,7 @@ class CamLoader_Q:
             return
         self.stopped = True
         self.stream.release()
+        self.stream_live.stop_stream()
 
     def __len__(self):
         return self.Q.qsize()

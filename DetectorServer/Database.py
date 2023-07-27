@@ -1,5 +1,6 @@
 # 导入pymysql
-
+import time
+from datetime import datetime
 from enum import Enum
 
 import pymysql
@@ -31,6 +32,11 @@ class db_state(Enum):
     detector_get_error_unk = 15
 
     server_get_success = 16
+
+    reminder_add_success = 17
+    reminder_add_error_unk = 18
+    reminder_del_success = 19
+    reminder_del_error_unk = 20
 
     def get_value(self):
         return str(self).replace('db_state.', '')
@@ -530,3 +536,115 @@ class mysql_db_detector():
                 return False
             else:
                 return True
+
+    def reminder_add(self, reminder_name, cam_source, select_time, init_rect, user_id, reminder_type, last_frame):
+        affected_rows = 0
+        if not self.user_is_exist_by_id(user_id):
+            return db_state.user_info_fail_user_is_not_exist
+        conn = self.pool.connection()
+        # 打开数据库可能会有风险，所以添加异常捕捉
+        try:
+            with conn.cursor() as cursor:
+                # 准备SQL语句
+                sql = "insert into reminder values(null, %s, %s, %s, %s, %s, %s, DEFAULT, %s)"
+                # 执行SQL语句
+                cursor.execute(sql,
+                               [reminder_name, cam_source, select_time, init_rect, user_id, reminder_type, last_frame])
+                # 提交事务
+                conn.commit()
+                affected_rows = cursor.rowcount
+                reminder_id = cursor.lastrowid
+        except Exception as e:
+            print("reminder_add-数据库操作异常：\n", e)
+        finally:
+            # 不管成功还是失败，都要关闭数据库连接
+            cursor.close()
+            conn.close()
+            if affected_rows > 0:
+                return {'state': db_state.reminder_add_success, 'reminder_id': reminder_id}
+            else:
+                return {'state': db_state.reminder_add_error_unk}
+
+    def reminder_del(self, reminder_id):
+        conn = self.pool.connection()
+        affected_rows = 0
+        # 打开数据库可能会有风险，所以添加异常捕捉
+        try:
+            with conn.cursor() as cursor:
+                # 准备SQL语句
+                sql = "DELETE FROM reminder WHERE reminder_id = %s"
+                # 执行SQL语句
+                cursor.execute(sql, [reminder_id])
+                # 提交事务
+                conn.commit()
+                affected_rows = cursor.rowcount
+        except Exception as e:
+            print("reminder_delete-数据库操作异常：\n", e)
+        finally:
+            # 不管成功还是失败，都要关闭数据库连接
+            cursor.close()
+            conn.close()
+            if affected_rows > 0:
+                return db_state.reminder_del_success
+            else:
+                return db_state.reminder_del_error_unk
+
+    def get_reminders_by_user_and_cam(self, user_id, cam_source, reminder_id=-1):
+        conn = self.pool.connection()
+        reminders = []
+
+        # 打开数据库可能会有风险，所以添加异常捕捉
+        try:
+            with conn.cursor() as cursor:
+                # 准备SQL语句
+                if reminder_id == -1:
+                    sql = "SELECT * FROM reminder WHERE user_id = %s AND cam_source = %s"
+                    # 执行SQL语句
+                    cursor.execute(sql, [user_id, cam_source])
+                else:
+                    sql = "SELECT * FROM reminder WHERE user_id = %s AND cam_source = %s AND id = %s"
+                    # 执行SQL语句
+                    cursor.execute(sql, [user_id, cam_source, reminder_id])
+                # 获取查询结果
+                results = cursor.fetchall()
+
+                for row in results:
+                    reminder_id, reminder_name, cam_source, select_time_str \
+                        , init_rect_str, user_id, reminder_type, start_time, last_frame = row
+                    # Create a reminder dictionary and add it to the list
+                    reminder = {
+                        'id': reminder_id,
+                        'reminder_name': reminder_name,
+                        'cam_source': cam_source,
+                        'select_time_str': select_time_str,
+                        'init_rect_str': init_rect_str,
+                        'user_id': user_id,
+                        'reminder_type': reminder_type,
+                        'start_time': start_time.timestamp(),
+                        'last_frame': last_frame
+                    }
+
+                    reminders.append(reminder)
+        except Exception as e:
+            print("get_reminders_by_user_and_cam - 数据库操作异常：\n", e)
+        finally:
+            # 不管成功还是失败，都要关闭数据库连接
+            cursor.close()
+            conn.close()
+
+        return reminders
+
+    def reminder_update_start_time(self, reminder_id):
+        conn = self.pool.connection()
+        # 打开数据库可能会有风险，所以添加异常捕捉
+        try:
+            with conn.cursor() as cursor:
+                sql = "UPDATE reminder SET start_time = DEFAULT WHERE id = %s"
+                cursor.execute(sql, [reminder_id])
+                conn.commit()
+        except Exception as e:
+            print("reminder_update_start_time-数据库操作异常：\n", e)
+        finally:
+            # 不管成功还是失败，都要关闭数据库连接
+            cursor.close()
+            conn.close()

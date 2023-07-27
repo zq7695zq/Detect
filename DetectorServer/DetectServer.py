@@ -2,6 +2,8 @@ import base64
 import configparser
 import socket
 import time
+import traceback
+from datetime import datetime
 from enum import Enum
 from threading import Thread
 
@@ -11,14 +13,18 @@ from fastapi.responses import JSONResponse
 from starlette.responses import StreamingResponse
 
 import RedisTool
+import Reminder
 from Database import db_state, mysql_db_detector
 from Detector import Detector
 from DetectorModel.ModelsLoader import ModelsLoader
 from Event import Event
 from Events.EventSaver import EventSaver
+from Models import ModelAddReminder
+from MoveReminder import MoveReminder
 from NotificationSender import NotiSender
 from PacketModels.Models import ModelDetector, ModelAddDetector, ModelCam2Events, \
     ModelGetEventFrames, ModelDelEvent, ModelGetNotification
+from StreamLive import StreamLive
 from Token import Token
 from WeChat.Database import mysql_db_wechat
 
@@ -106,6 +112,10 @@ class Detector_Controller:
                                     self.models,
                                     self.restart_detector,
                                     self.interval_time, self.show_threshold)
+                # 加载提醒器
+                detector.reminders = list([crate_reminder_from_db_obj(obj, self.db)
+                                           for obj in
+                                           self.db.get_reminders_by_user_and_cam(d['owner'], d["cam_source"])])
                 self.detectors_obj[d["cam_source"]] = detector
                 self.detectors_thread[d["cam_source"]] = {
                     'thread': Thread(target=self.update_thread, args=(detector, d["cam_source"]),
@@ -142,7 +152,11 @@ class Detector_Controller:
                 return
 
             time_start = time.time()
-            ret = detector.detect_frame()
+            try:
+                ret = detector.detect_frame()
+            except Exception as e:
+                print(e)
+                traceback.print_exc()
             # print("detecting on :" + cam_source + "  event:" + str(ret["event"]))
             # 每一百帧记录一次帧（充当封面）
             if crycle_count % 100 == 0:
@@ -284,12 +298,12 @@ class DetectServer(FastAPI):
             #
             return ret
 
-        def generate_frames(cam_source):
-            if cam_source in self.detector_controller.detectors_obj and \
-                    self.detector_controller.detectors_thread[cam_source]['state'] == detector_state.running:
-                _detector = self.detector_controller.detectors_obj.get(cam_source)
-                if len(_detector.post_frames) > 0:
-                    yield _detector.post_frames.pop().tobytes()
+        # def generate_frames(cam_source):
+        #     if cam_source in self.detector_controller.detectors_obj and \
+        #             self.detector_controller.detectors_thread[cam_source]['state'] == detector_state.running:
+        #         _detector: Detector = self.detector_controller.detectors_obj.get(cam_source)
+        #         if _detector.post_frames_con.get_stream_len() > 0:
+        #             yield _detector.post_frames_con.pop_frames()
 
         @self.get("/open_video")
         async def open_video(request: Request, cam_source):
@@ -298,21 +312,70 @@ class DetectServer(FastAPI):
             if is_owner:
                 if cam_source in self.detector_controller.detectors_obj and \
                         self.detector_controller.detectors_thread[cam_source]['state'] == detector_state.running:
-                    _detector = self.detector_controller.detectors_obj.get(cam_source)
-                    _detector.open_stream()
-                    print("open_video:" + cam_source)
+                    _detector: Detector = self.detector_controller.detectors_obj.get(cam_source)
+                    _stream: StreamLive = _detector.cam.stream_live
+                    if not _stream.stream_opened:
+                        _stream.open_stream(cam_source)
+                        print("open_video:" + cam_source)
 
-        # 定义一个FastAPI路由，用于处理视频流请求。
-        @self.get("/video_feed")
-        async def video_feed(request: Request, cam_source):
+        @self.get("/keep_video")
+        async def keep_video(request: Request, cam_source):
             payload = self.Token.verify_token(request.headers.get("Authorization"))
             is_owner = self.db.user_is_owner_cam_source(cam_source, payload['id'])
             if is_owner:
-                frame = generate_frames(cam_source)
-                if frame is not None:
-                    return StreamingResponse(frame, media_type="image/jpeg")
-                else:
-                    return "error"
+                if cam_source in self.detector_controller.detectors_obj and \
+                        self.detector_controller.detectors_thread[cam_source]['state'] == detector_state.running:
+                    _detector: Detector = self.detector_controller.detectors_obj.get(cam_source)
+                    _stream: StreamLive = _detector.cam.stream_live
+                    if _stream.stream_opened:
+                        _stream.keep_live()
+                        print("keep_video:" + cam_source)
 
-            else:
-                return "error"
+        @self.post("/add_video_reminder")
+        async def add_video_reminder(request: Request, m: ModelAddReminder):
+            payload = self.Token.verify_token(request.headers.get("Authorization"))
+            is_owner = self.db.user_is_owner_cam_source(m.cam_source, payload['id'])
+            if is_owner:
+                if m.cam_source in self.detector_controller.detectors_obj and \
+                        self.detector_controller.detectors_thread[m.cam_source]['state'] == detector_state.running:
+                    _detector: Detector = self.detector_controller.detectors_obj.get(m.cam_source)
+                    _detector.rect_tracker.add_rect_from_base64_jpg(tuple(m.rect), m.frame)
+                    result = self.db.reminder_add(m.reminder_name, m.cam_source, m.select_time
+                                                  , ','.join(str(i) for i in m.rect), payload['id'], m.reminder_type, m.frame)
+                    if 'reminder_id' in result:
+                        _detector.reminder_lock.acquire()
+                        _detector.reminders += list(crate_reminder_from_db_obj(obj, self.db)
+                                                    for obj in
+                                                    self.db.get_reminders_by_user_and_cam(payload['id'],
+                                                                                          m.cam_source,
+                                                                                          result['reminder_id']))
+                        _detector.reminder_lock.release()
+                        print("add_video_reminder:" + m.cam_source)
+                    else:
+                        print("add_video_reminder_error")
+        # @self.get("/video_feed")
+        # async def video_feed(request: Request, cam_source):
+        #     payload = self.Token.verify_token(request.headers.get("Authorization"))
+        #     is_owner = self.db.user_is_owner_cam_source(cam_source, payload['id'])
+        #     if is_owner:
+        #         frame = generate_frames(cam_source)
+        #         if frame is not None:
+        #             return StreamingResponse(content=frame, media_type="image/jpeg")
+        #         else:
+        #             return "error"
+        #     else:
+        #         return "error"
+
+
+def crate_reminder_from_db_obj(db_obj, db):
+    init_rect_tuple = tuple(map(int, db_obj['init_rect_str'].split(',')))
+    select_time = db_obj['select_time_str'].total_seconds()
+    ret = None
+    if db_obj['reminder_type'] == 1:
+        ret = MoveReminder(db_obj['start_time'], select_time, init_rect_tuple)
+    elif db_obj['reminder_type'] == 2:
+        pass
+        # ret = MoveReminder(db_obj['start_time'], select_time)
+    ret.db = db
+    ret.reminder_id = db_obj['id']
+    return ret

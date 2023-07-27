@@ -9,6 +9,7 @@
       <sourceFolder url="file://$MODULE_DIR$/DetectorServer/PacketModels" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/LoginServer" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/DetectorServer/Notification" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/DetectorServer/DetectorModel/Models/pysot" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/DetectorServer/DetectorModel/Models/TSSTG" />
       <excludeFolder url="file://$MODULE_DIR$/DetectorServer/DetectorModel/Models/sppe" />
       <excludeFolder url="file://$MODULE_DIR$/DetectorServer/DetectorModel/Models/yolo-tiny-onecls" />

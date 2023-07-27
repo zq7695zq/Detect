@@ -1,4 +1,3 @@
-import threading
 import time
 from collections import deque
 
@@ -42,6 +41,10 @@ class Detector:
 
         self.show_threshold = show_threshold
 
+        self.stream_opened = False
+
+        self.post_frames = deque(maxlen=120)
+
         self.started = True
 
         # self.post_frames_con = PostFramesController()
@@ -65,6 +68,14 @@ class Detector:
 
     def is_available(self):
         return self.available
+
+    def open_stream(self):
+        self.post_frames.clear()
+        self.stream_opened = True
+
+    def close_stream(self):
+        self.post_frames.clear()
+        self.stream_opened = False
 
     def detect_frame(self):
         f = 0
@@ -113,6 +124,7 @@ class Detector:
         # Update tracks by matching each track information of current and previous frame or
         # create a new track if no matched.
         self.models.tracker.update(detections, frame)
+
         event = Event(Event.pending)
 
         # Predict Actions of each track.

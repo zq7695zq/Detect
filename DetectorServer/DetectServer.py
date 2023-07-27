@@ -1,4 +1,3 @@
-import base64
 import configparser
 import socket
 import time
@@ -6,9 +5,7 @@ from enum import Enum
 from threading import Thread
 
 from fastapi import FastAPI, Request
-from fastapi.openapi.models import Response
 from fastapi.responses import JSONResponse
-from starlette.responses import StreamingResponse
 
 import RedisTool
 from Database import db_state, mysql_db_detector
@@ -78,8 +75,6 @@ class Detector_Controller:
 
         self.detectors_thread = {}
 
-        self.detectors_obj = {}
-
         self.show_threshold = 20  # 展示动作的阈值 20%
 
         self.retest_interval_time = 3  # 连通性测试失败时重新测试间隔,
@@ -93,7 +88,7 @@ class Detector_Controller:
 
     def append_detector(self, d, count):
         while True:
-            if count > 3:
+            if count > 30:
                 print("地址：%s 测试连接超过30次，停止测试..." % (d["cam_source"]))
                 return
             elif count > 1:
@@ -106,7 +101,6 @@ class Detector_Controller:
                                     self.models,
                                     self.restart_detector,
                                     self.interval_time, self.show_threshold)
-                self.detectors_obj[d["cam_source"]] = detector
                 self.detectors_thread[d["cam_source"]] = {
                     'thread': Thread(target=self.update_thread, args=(detector, d["cam_source"]),
                                      daemon=True),
@@ -241,7 +235,7 @@ class DetectServer(FastAPI):
                 pass
             elif state == db_state.detector_add_success:
                 self.detectors.append(new_detector)
-                self.detector_controller.append_detector({'cam_source': m.cam_source, 'owner': payload['id']}, 1)
+                self.detector_controller.append_detector(new_detector, 1)
                 pass
             return ret
 
@@ -280,39 +274,6 @@ class DetectServer(FastAPI):
             ret = {
                 'notification': notification,
                 'state': state,
-            }
+                }
             #
             return ret
-
-        def generate_frames(cam_source):
-            if cam_source in self.detector_controller.detectors_obj and \
-                    self.detector_controller.detectors_thread[cam_source]['state'] == detector_state.running:
-                _detector = self.detector_controller.detectors_obj.get(cam_source)
-                if len(_detector.post_frames) > 0:
-                    yield _detector.post_frames.pop().tobytes()
-
-        @self.get("/open_video")
-        async def open_video(request: Request, cam_source):
-            payload = self.Token.verify_token(request.headers.get("Authorization"))
-            is_owner = self.db.user_is_owner_cam_source(cam_source, payload['id'])
-            if is_owner:
-                if cam_source in self.detector_controller.detectors_obj and \
-                        self.detector_controller.detectors_thread[cam_source]['state'] == detector_state.running:
-                    _detector = self.detector_controller.detectors_obj.get(cam_source)
-                    _detector.open_stream()
-                    print("open_video:" + cam_source)
-
-        # 定义一个FastAPI路由，用于处理视频流请求。
-        @self.get("/video_feed")
-        async def video_feed(request: Request, cam_source):
-            payload = self.Token.verify_token(request.headers.get("Authorization"))
-            is_owner = self.db.user_is_owner_cam_source(cam_source, payload['id'])
-            if is_owner:
-                frame = generate_frames(cam_source)
-                if frame is not None:
-                    return StreamingResponse(frame, media_type="image/jpeg")
-                else:
-                    return "error"
-
-            else:
-                return "error"

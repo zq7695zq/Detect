@@ -15,14 +15,13 @@ def convert_seconds(seconds):
 class MoveReminder(Reminder):
     def draw(self, frame, last_rect):
         self.remaining_time = self.interval + self.start_time - time.time()
-        self.isRemind = self.remaining_time < self.interval
         bbox = last_rect
         font = cv2.FONT_HERSHEY_SIMPLEX
-        if self.isRemind <= 0:
-            return cv2.putText(frame, "waring!!", (bbox[0] - 10, bbox[1] - 20), font, 0.3, (0, 0, 255), 1)
+        if self.remaining_time <= 0:
+            return cv2.putText(frame, "waring!!", (bbox[0] - 10, bbox[1] - 10), font, 0.5, (0, 0, 255), 1), (0, 0, 255), True
         else:
             return cv2.putText(frame, 'pills:' + convert_seconds(self.remaining_time),
-                               (bbox[0] - 20, bbox[1] - 20), font, 0.3, (0, 255, 0), 1)
+                               (bbox[0] - 10, bbox[1] - 10), font, 0.5, (0, 255, 0), 1), (0, 255, 0), False
 
     def rect_moved(self, frame, last_rect):
         print('rect_moved!!!!')
@@ -39,4 +38,4 @@ class MoveReminder(Reminder):
         self.interval = interval
         self.isRemind = False
         self.remaining_time = 999999
-        super().__init__(init_rect, start_time, move_distance=50)
+        super().__init__(init_rect, start_time, move_distance=20, in_distance=120)

@@ -1,6 +1,5 @@
 from WeChat.WeChatNotification import WeChatNotification
 
-
 class NotiSender:
     def __init__(self, db, user_id):
         self.db = db

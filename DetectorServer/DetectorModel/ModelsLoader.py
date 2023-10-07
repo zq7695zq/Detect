@@ -6,6 +6,7 @@ from DetectorLoader import TinyYOLOv3_onecls
 from PoseEstimateLoader import SPPE_FastPose
 from PysotModel import PysotModel
 from Track.Tracker import Tracker
+from pPose_nms import PoseNMS
 
 
 class ModelsLoader:
@@ -35,16 +36,17 @@ class ModelsLoader:
 
         # DETECTION MODEL.
         self.input_size_dets = self.args.detection_input_size
-        self.detect_model = TinyYOLOv3_onecls(self.input_size_dets, device=device)
+        self.detect_model = TinyYOLOv3_onecls(self.input_size_dets, device=device, conf_thres=0.8)
 
         # POSE MODEL.
         inp_pose = self.args.pose_input_size.split('x')
         inp_pose = (int(inp_pose[0]), int(inp_pose[1]))
         self.pose_model = SPPE_FastPose(self.args.pose_backbone, inp_pose[0], inp_pose[1], device=device)
+        self.savedPoseNums = {}
 
         # Tracker.
-        max_age = 30
-        self.tracker = Tracker(max_age=max_age, n_init=3)
+        self.max_age = 30
+        self.trackers = {}
 
         # Actions Estimate.
         self.action_model = TSSTG()
@@ -52,5 +54,22 @@ class ModelsLoader:
         self.resize_fn = ResizePadding(self.input_size_dets, self.input_size_dets)
 
         # ItemTracker
-        self.pysot_model = PysotModel()
+        self.pysot_models = {}
 
+    def addPoseNums(self, cam_source):
+        self.savedPoseNums[cam_source] = PoseNMS()
+
+    def getPoseNums(self, cam_source):
+        return self.savedPoseNums[cam_source]
+
+    def addTracker(self, cam_source):
+        self.trackers[cam_source] = Tracker(max_age=self.max_age, n_init=3)
+
+    def getTracker(self, cam_source):
+        return self.trackers[cam_source]
+
+    def addPysotModel(self, cam_source):
+        self.pysot_models[cam_source] = PysotModel()
+
+    def getPysotModel(self, cam_source):
+        return self.pysot_models[cam_source]

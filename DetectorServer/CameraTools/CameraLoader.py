@@ -98,7 +98,8 @@ class CamLoader_Q:
         preprocess: (Callable function) to process the frame before return.
     """
 
-    def __init__(self, camera, error_callback, interval_time, batch_size=1, queue_size=256, preprocess=None):
+    def __init__(self, camera, error_callback, batch_size=1, queue_size=256, preprocess=None,
+                 is_local_file=False):
         self.error_callback = error_callback
         self.camera_source = camera
         self.stream = cv2.VideoCapture(camera)
@@ -122,7 +123,7 @@ class CamLoader_Q:
         self.Q = Queue(maxsize=queue_size)
         self.preprocess_fn = preprocess
 
-        self.interval_time = interval_time
+        self.is_local_file = is_local_file
 
     def start(self):
         if self.stopped:
@@ -140,6 +141,7 @@ class CamLoader_Q:
         return self
 
     def update(self):
+        frame_counter = 0
         while not self.stopped:
             if not self.Q.full():
                 frames = []
@@ -149,6 +151,12 @@ class CamLoader_Q:
                         self.stop()
                         self.error_callback('camera stop! cam_source : ' + self.camera_source)
                         return
+                    if self.is_local_file:
+                        time.sleep(1 / self.fps)
+                        frame_counter += 1
+                        if frame_counter == int(self.stream.get(cv2.CAP_PROP_FRAME_COUNT)) - 1:
+                            frame_counter = 0
+                            self.stream.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
                     if self.preprocess_fn is not None:
                         frame = self.preprocess_fn(frame)

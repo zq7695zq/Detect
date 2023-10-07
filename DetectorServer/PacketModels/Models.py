@@ -41,3 +41,11 @@ class ModelAddReminder(BaseModel):
     select_time: str
     reminder_name: str
     reminder_type: int
+
+
+class ModelIsRecording(BaseModel):
+    cam_source: str
+
+
+class ModelGetNotification(BaseModel):
+    cam_source: str

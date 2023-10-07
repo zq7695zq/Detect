@@ -1,5 +1,7 @@
+import threading
 import time
 from collections import deque
+from datetime import datetime
 
 import cv2
 import numpy as np
@@ -10,15 +12,25 @@ from CameraTools.CameraLoader import CamLoader_Q
 from DetectorModel.Track.Tracker import Detection
 from DetectorModel.fn import draw_single
 from Events.Event import Event
-from RectTracker import RectTracker
-
+from FrameBuffer import FrameBuffer
+from GestureLoader import GestureLoader
+from ModelsLoader import ModelsLoader
 from MoveReminder import MoveReminder
 from PostFramesController import PostFramesController
+from RectTracker import RectTracker
+from UploadRecords.VoiceHandler import VoiceHandler
 
 
 class Detector:
-    def __init__(self, cam_source, owner, event_saver, models, restart_callback, interval_time=5, show_threshold=25):
-        self.models = models
+    def __init__(self, cam_source, owner, event_saver, models, restart_callback, show_threshold=25,
+                 is_local_file=False):
+        self.models: ModelsLoader = models
+
+        self.models.addPoseNums(cam_source)
+
+        self.models.addTracker(cam_source)
+
+        self.models.addPysotModel(cam_source)
 
         self.started = False  # 是否已经完整走完init
 
@@ -30,8 +42,8 @@ class Detector:
 
         self.restart_callback = restart_callback
 
-        self.cam = CamLoader_Q(cam_source, self.error_callback, interval_time, queue_size=256,
-                               preprocess=self.preproc).start()
+        self.cam = CamLoader_Q(cam_source, self.error_callback, queue_size=256,
+                               preprocess=self.preproc, is_local_file=is_local_file).start()
 
         self.available = not self.cam.stopped
 
@@ -41,6 +53,10 @@ class Detector:
 
         self.show_threshold = show_threshold
 
+        self.action_buffer = FrameBuffer(60)
+
+        self.is_local_file = is_local_file
+
         self.stream_opened = False
 
         self.post_frames = deque(maxlen=120)
@@ -49,11 +65,26 @@ class Detector:
 
         # self.post_frames_con = PostFramesController()
 
-        self.rect_tracker = RectTracker(self.models.pysot_model)
-
         # 物品超时和区域警报
         self.reminders = []
+
+        self.reminder_buffer = FrameBuffer(60)
+
         self.reminder_lock = threading.Lock()
+
+        self.rect_tracker = RectTracker(self.models.getPysotModel(cam_source))
+
+        self.last_time_color = (0, 255, 0)
+
+        # 音频识别
+        self.voice_handler = VoiceHandler()
+
+        self.voice_buffer = FrameBuffer(60)
+
+        # 手势识别
+        self.gesture_handler = GestureLoader()
+
+        self.gesture_buffer = FrameBuffer(60)
 
     def error_callback(self, error):
         self.available = False
@@ -78,29 +109,27 @@ class Detector:
         self.stream_opened = False
 
     def detect_frame(self):
-        f = 0
         frame = self.cam.getitem()
         origin_frame = np.copy(frame)
         # Detect humans bbox in the frame with detector model.
         detected = self.models.detect_model.detect(frame, need_resize=False, expand_bb=10)
-
         detected_bbox = []
         if detected is not None:
             detected_bbox = self.convert_to_bbox_array(detected)
 
         # Predict each tracks bbox of current frame from previous frames information with Kalman filter.
-        self.models.tracker.predict()
+        self.models.getTracker(self.cam_source).predict()
         # Merge two source of predicted bbox together.
-        for track in self.models.tracker.tracks:
+        for track in self.models.getTracker(self.cam_source).tracks:
             det = torch.tensor([track.to_tlbr().tolist() + [0.5, 1.0, 0.0]], dtype=torch.float32)
             detected = torch.cat([detected, det], dim=0) if detected is not None else det
 
         detections = []  # List of Detections object for tracking.
-
         if detected is not None:
             # detected = non_max_suppression(detected[None, :], 0.45, 0.2)[0]
             # Predict skeleton pose of each bboxs.
-            poses = self.models.pose_model.predict(frame, detected[:, 0:4], detected[:, 4])
+            poses = self.models.pose_model.predict(frame, detected[:, 0:4], detected[:, 4],
+                                                   self.models.getPoseNums(self.cam_source))
 
             # Create Detections object.
             detections = [Detection(self.kpt2bbox(ps['keypoints'].numpy()),
@@ -112,23 +141,43 @@ class Detector:
             if self.models.args.show_detected:
                 for bb in detected[:, 0:5]:
                     frame = cv2.rectangle(frame, (bb[0], bb[1]), (bb[2], bb[3]), (0, 0, 255), 1)
+            # 过滤掉过于接近的Detection
+            detections = self.filter_close_bboxes(detections)
 
+        item_event = Event(Event.pending)
+        item_frame = np.zeros_like(origin_frame)
+        frame_with_item = np.zeros_like(origin_frame)
         # 物品追踪
         if self.rect_tracker.tracker_inited:
-            ret_rect = self.rect_tracker.track_frame(origin_frame, frame)
+            ret_rect = self.rect_tracker.track_frame(origin_frame, item_frame, self.last_time_color)
+            frame_with_item = cv2.add(item_frame, origin_frame)
             self.reminder_lock.acquire()
             for rt in self.reminders:
-                frame = rt.track_frame(frame, ret_rect, detected_bbox)
+                item_frame, self.last_time_color, isWarning, isMoved = rt.track_frame(item_frame, ret_rect,
+                                                                                      detected_bbox)
+                frame_with_item = cv2.add(item_frame, frame_with_item)
+                if isWarning and not self.rect_tracker.isWarned:
+                    self.rect_tracker.isWarned = True
+                    item_event = Event(Event.pills_warning)
+                    self.event_saver.addEvent(item_event, self.reminder_buffer.get_frames())
+                elif not isWarning and isMoved:
+                    self.rect_tracker.isWarned = False
+
             self.reminder_lock.release()
+            self.reminder_buffer.add_frame(frame_with_item)
+
+            # 补充事件结束后的一些帧进事件回放
+            self.event_saver.pushMoreFrame(item_event, frame_with_item, 'pill')
 
         # Update tracks by matching each track information of current and previous frame or
         # create a new track if no matched.
-        self.models.tracker.update(detections, frame)
+        self.models.getTracker(self.cam_source).update(detections, frame)
 
-        event = Event(Event.pending)
-
+        event_action = Event(Event.pending)
+        action_frame = np.zeros_like(origin_frame)
+        frame_with_action = np.zeros_like(origin_frame)
         # Predict Actions of each track.
-        for i, track in enumerate(self.models.tracker.tracks):
+        for i, track in enumerate(self.models.getTracker(self.cam_source).tracks):
             if not track.is_confirmed():
                 continue
 
@@ -148,33 +197,38 @@ class Detector:
                     action = '{}: {:.2f}%'.format(action_name, out[0].max() * 100)
                     if action_name == 'Fall Down':
                         clr = (255, 0, 0)
-                        event = Event(Event.fall_down)
+                        event_action = Event(Event.fall_down)
                     elif action_name == 'Lying Down':
                         clr = (255, 200, 0)
-                        event = Event(Event.lying_down)
+                        event_action = Event(Event.lying_down)
                     elif action_name == 'Walking':
                         clr = (255, 100, 0)
-                        event = Event(Event.walking)
+                        event_action = Event(Event.walking)
                     elif action_name == 'Sitting':
                         clr = (255, 100, 100)
-                        event = Event(Event.sitting)
+                        event_action = Event(Event.sitting)
                     elif action_name == 'Standing':
                         clr = (255, 100, 255)
-                        event = Event(Event.standing)
-                    event.set_confidence(out[0].max() * 100)
+                        event_action = Event(Event.standing)
+                    event_action.set_confidence(out[0].max() * 100)
                     # 发生事件处理
-                    if event == event.fall_down:
-                        self.event_saver.addEvent(event, track.frame_list)
+                    if event_action == event_action.fall_down:
+                        self.event_saver.addEvent(event_action, track.frame_list)
 
             # VISUALIZE.
             if track.time_since_update == 0:
                 if self.models.args.show_skeleton:
-                    frame = draw_single(frame, track.keypoints_list[-1])
-                frame = cv2.rectangle(frame, (bbox[0], bbox[1]), (bbox[2], bbox[3]), (0, 255, 0), 1)
-                frame = cv2.putText(frame, str(track_id), (center[0], center[1]), cv2.FONT_HERSHEY_COMPLEX,
-                                    0.4, (255, 0, 0), 2)
-                frame = cv2.putText(frame, action, (bbox[0] + 5, bbox[1] + 15), cv2.FONT_HERSHEY_COMPLEX,
-                                    0.4, clr, 1)
+                    action_frame = draw_single(action_frame, track.keypoints_list[-1])
+                action_frame = cv2.rectangle(action_frame, (bbox[0], bbox[1]), (bbox[2], bbox[3]), (0, 255, 0), 1)
+                action_frame = cv2.putText(action_frame, str(track_id), (center[0], center[1]),
+                                           cv2.FONT_HERSHEY_COMPLEX,
+                                           0.4, (255, 0, 0), 2)
+                action_frame = cv2.putText(action_frame, action, (bbox[0] + 5, bbox[1] + 15), cv2.FONT_HERSHEY_COMPLEX,
+                                           0.4, clr, 1)
+
+        frame_with_action = cv2.add(action_frame, frame)
+        # 补充事件结束后的一些帧进事件回放
+        self.event_saver.pushMoreFrame(event_action, frame_with_action, 'action')
 
         # if self.post_frames_con.stream_opened and not self.post_frames_con.post_frames_lock.locked():
         #     buffer = cv2.imencode(".jpg", frame)[1]
@@ -185,16 +239,43 @@ class Detector:
         #         self.post_frames_con.clear_steam()
         # Show Frame.
         # frame = cv2.resize(frame, (0, 0), fx=2., fy=2.)
+        event_gesture = Event(Event.pending)
+        # 手势识别
+        if self.voice_handler.has_feateure():
+            frame, gesture_label = self.gesture_handler.detect_frame(frame, [])
+            if gesture_label != 'unk':
+                self.gesture_handler.next_frame(gesture_label, frame)
+            handle_res = self.gesture_handler.gesture_handle()
+            if handle_res['reliable']:
+                event_gesture = Event.get_gesture_by_name(handle_res['label'])
+                self.event_saver.addEvent(event_gesture, handle_res['frames'])
+                self.voice_handler.set_recording(True)
+                frame = cv2.putText(frame, 'voice recording',
+                                    (120, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1)
+            else:
+                self.voice_handler.set_recording(False)
+        # 补充事件结束后的一些帧进事件回放
+        self.event_saver.pushMoreFrame(event_gesture, frame, 'gesture')
+
         fps_t = (time.time() - self.fps_time)
-        frame = cv2.putText(frame, '%d, FPS: %f' % (f, 1.0 / fps_t if fps_t != 0 else 1),
-                            (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+        # frame = cv2.putText(frame, '%d, FPS: %f' % (f, 1.0 / fps_t if fps_t != 0 else 1),
+        #                     (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1)
         # frame = frame[:, :, ::-1]
+        frame = cv2.putText(frame, str(datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
+                            (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1)
+
+        frame = cv2.add(action_frame, frame)
+        frame = cv2.add(item_frame, frame)
+
         # 是否直播推流
         if self.cam.stream_live.stream_opened and self.cam.stream_live.check_out_of_time():
             self.cam.stream_live.write_frame(frame)
+        # print(self.cam_source + " fps : " + str( 1.0 / fps_t))
         self.fps_time = time.time()
-        # print(fps_t)
-        return {"event": event, "frame": frame, "origin_frame": origin_frame}
+        return {"event_action": event_action,
+                "frame": frame,
+                "origin_frame": origin_frame,
+                "fps": 1.0 / fps_t}
         # cv2.imwrite("./Results/img-" + str(time.time()) + ".jpg", frame)
 
     def image_resize(self, image, width=None, height=None, inter=cv2.INTER_AREA):
@@ -246,3 +327,30 @@ class Detector:
     def convert_to_bbox_array(self, detected_objects):
         return [(obj[1].item(), obj[0].item(), (obj[3] - obj[1]).item()
                  , (obj[2] - obj[0]).item()) for obj in detected_objects]
+
+    def filter_close_bboxes(self, detections, threshold_distance=40):
+        def bbox_center(bbox):
+            x, y, w, h = bbox
+            return x + w / 2, y + h / 2
+
+        filtered_detections = []
+        for detection in detections:
+            bbox = detection.tlbr
+            bbox_center_x, bbox_center_y = bbox_center(bbox)
+
+            is_close = False
+            for filtered_detection in filtered_detections:
+                filtered_bbox = filtered_detection.tlbr
+                filtered_bbox_center_x, filtered_bbox_center_y = bbox_center(filtered_bbox)
+
+                center_distance = np.sqrt(
+                    (bbox_center_x - filtered_bbox_center_x) ** 2 + (bbox_center_y - filtered_bbox_center_y) ** 2)
+
+                if center_distance < threshold_distance:
+                    is_close = True
+                    break
+
+            if not is_close:
+                filtered_detections.append(detection)
+
+        return filtered_detections

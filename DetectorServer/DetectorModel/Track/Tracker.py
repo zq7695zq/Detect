@@ -140,6 +140,7 @@ class Tracker:
         ----------
         detections : List[deep_sort.detection.Detection]
             A list of detections at the current time step.
+        frame : frame
         """
         # Run matching cascade.
         matches, unmatched_tracks, unmatched_detections = self._match(detections)

@@ -80,7 +80,7 @@ class mysql_db_detector():
             conn.close()
             return is_exist
 
-    def detector_add(self, cam_source, nickname, owner, server_id, ret):
+    def detector_add(self, cam_source, nickname, owner, is_local_file, server_id, ret):
         if self.detector_is_exist_by_cam_source(cam_source):
             return db_state.detector_cam_source_exist
         conn = self.pool.connection()
@@ -88,9 +88,11 @@ class mysql_db_detector():
         try:
             with conn.cursor() as cursor:
                 # 准备SQL语句
-                sql = "insert into detector values(null, %s, %s, %s)"
+                sql = "insert into detector values(null, %s, %s, %s, %s)"
+                # 映射布尔值为整数值
+                is_local_file_int = 1 if is_local_file else 0
                 # 执行SQL语句
-                cursor.execute(sql, [cam_source, nickname, owner])
+                cursor.execute(sql, [cam_source, nickname, owner, is_local_file_int])
                 # 提交事务
                 conn.commit()
                 detector_id = cursor.lastrowid
@@ -117,40 +119,12 @@ class mysql_db_detector():
                         'id': detector_id,
                         'cam_source': cam_source,
                         'nickname': nickname,
-                        'owner': owner
+                        'owner': owner,
+                        'is_local_file': is_local_file
                     }
                     return db_state.detector_add_success
                 else:
                     return db_state.detector_add_error_unk
-
-    def detector_get_all(self, ret):
-        conn = self.pool.connection()
-        # 打开数据库可能会有风险，所以添加异常捕捉
-        try:
-            with conn.cursor() as cursor:
-                # 准备SQL语句
-                sql = """
-                SELECT * FROM detector
-                """
-                # 执行SQL语句
-                cursor.execute(sql)
-                # 执行完SQL语句后的返回结果都是保存在cursor中
-                # 所以要从cursor中获取全部数据
-                datas = cursor.fetchall()
-                # 查出当前查询的列名，保存到columns
-                columns = [column[0] for column in cursor.description]
-                for row in datas:
-                    ret.append(dict(zip(columns, row)))
-        except Exception as e:
-            print("detector_get_all-数据库操作异常：\n", e)
-        finally:
-            # 不管成功还是失败，都要关闭数据库连接
-            cursor.close()
-            conn.close()
-            if len(datas) == 0:
-                return db_state.detector_get_success
-            else:
-                return db_state.detector_get_success
 
     def detector_get_by_server(self, server_id, ret):
         conn = self.pool.connection()
@@ -159,7 +133,8 @@ class mysql_db_detector():
             with conn.cursor() as cursor:
                 # 准备SQL语句
                 sql = """
-                SELECT * FROM detector
+                SELECT *
+                 FROM detector
                     JOIN detector_server
                     ON detector.id = detector_server.detector_id
                     WHERE server_id = %s
@@ -172,7 +147,10 @@ class mysql_db_detector():
                 # 查出当前查询的列名，保存到columns
                 columns = [column[0] for column in cursor.description]
                 for row in datas:
-                    ret.append(dict(zip(columns, row)))
+                    # 将Tinyint列的值转换为布尔值
+                    row_dict = dict(zip(columns, row))
+                    row_dict['is_local_file'] = bool(row_dict['is_local_file'])
+                    ret.append(row_dict)
         except Exception as e:
             print("detector_get_by_server-数据库操作异常：\n", e)
         finally:
@@ -193,7 +171,8 @@ class mysql_db_detector():
             with conn.cursor() as cursor:
                 # 准备SQL语句
                 sql = """
-                SELECT * FROM detector
+                SELECT *
+                 FROM detector
                 WHERE owner = %s
                 """
                 # 执行SQL语句
@@ -204,7 +183,10 @@ class mysql_db_detector():
                 # 查出当前查询的列名，保存到columns
                 columns = [column[0] for column in cursor.description]
                 for row in datas:
-                    ret.append(dict(zip(columns, row)))
+                    # 将Tinyint列的值转换为布尔值
+                    row_dict = dict(zip(columns, row))
+                    row_dict['is_local_file'] = bool(row_dict['is_local_file'])
+                    ret.append(row_dict)
         except Exception as e:
             print("detector_get_by_owner-数据库操作异常：\n", e)
         finally:

@@ -14,7 +14,12 @@ class RectTracker:
         # build tracker
         self.tracker = build_tracker(self.model)
         self.tracker_inited = False
+        self.isWarned = False
         pass
+
+    def reset_rects(self):
+        self.tracker_inited = False
+        self.isWarned = False
 
     def add_rect(self, init_rect, frame):
         self.tracker.init(frame, init_rect)
@@ -29,7 +34,7 @@ class RectTracker:
         bgr_image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         self.add_rect(init_rect, bgr_image)
 
-    def track_frame(self, origin_frame, out_frame):
+    def track_frame(self, origin_frame, out_frame, color):
         if not self.tracker_inited:
             return
         outputs = self.tracker.track(origin_frame)
@@ -46,7 +51,7 @@ class RectTracker:
             bbox = list(map(int, outputs['bbox']))
             cv2.rectangle(out_frame, (bbox[0], bbox[1]),
                           (bbox[0] + bbox[2], bbox[1] + bbox[3]),
-                          (0, 255, 0), 3)
+                          color, 2)
         return bbox
 
     def del_rect(self, rect_id):

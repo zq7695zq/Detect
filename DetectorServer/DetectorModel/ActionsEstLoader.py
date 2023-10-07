@@ -29,24 +29,30 @@ class TSSTG(object):
         """Predict actions from single person skeleton points and score in time sequence.
         Args:
             pts: (numpy array) points and score in shape `(t, v, c)` where
-                t : inputs sequence (time steps).,
-                v : number of graph node (body parts).,
-                c : channel (x, y, score).,
+                t : inputs sequence (time steps),
+                v : number of graph node (body parts),
+                c : channel (x, y, score).
             image_size: (tuple of int) width, height of image frame.
         Returns:
             (numpy array) Probability of each class actions.
         """
+
+        # Normalize and scale points
         pts[:, :, :2] = normalize_points_with_size(pts[:, :, :2], image_size[0], image_size[1])
         pts[:, :, :2] = scale_pose(pts[:, :, :2])
-        pts = np.concatenate((pts, np.expand_dims((pts[:, 1, :] + pts[:, 2, :]) / 2, 1)), axis=1)
 
-        pts = torch.tensor(pts, dtype=torch.float32)
-        pts = pts.permute(2, 0, 1)[None, :]
+        # Additional points calculation and concatenation
+        additional_pts = (pts[:, 1, :] + pts[:, 2, :]) / 2
+        pts = np.concatenate((pts, np.expand_dims(additional_pts, 1)), axis=1)
 
+        # Convert numpy to torch tensor, permute dimensions, and move to the specified device
+        pts = torch.tensor(pts, dtype=torch.float32, device=self.device).permute(2, 0, 1).unsqueeze(0)
+
+        # Calculate motion tensor
         mot = pts[:, :2, 1:, :] - pts[:, :2, :-1, :]
-        mot = mot.to(self.device)
-        pts = pts.to(self.device)
 
+        # Get model output
         out = self.model((pts, mot))
 
         return out.detach().cpu().numpy()
+

@@ -10,6 +10,8 @@
       <sourceFolder url="file://$MODULE_DIR$/LoginServer" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/DetectorServer/Notification" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/DetectorServer/DetectorModel/Models/pysot" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/DetectorServer/DetectorModel/Models" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/DetectorServer/DetectorModel/Models/yolo-gesture" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/DetectorServer/DetectorModel/Models/TSSTG" />
       <excludeFolder url="file://$MODULE_DIR$/DetectorServer/DetectorModel/Models/sppe" />
       <excludeFolder url="file://$MODULE_DIR$/DetectorServer/DetectorModel/Models/yolo-tiny-onecls" />
@@ -18,6 +20,9 @@
     </content>
     <orderEntry type="jdk" jdkName="Python 3.9 (venv) (5)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
+  </component>
+  <component name="PackageRequirementsSettings">
+    <option name="keepMatchingSpecifier" value="false" />
   </component>
   <component name="PyDocumentationSettings">
     <option name="format" value="PLAIN" />

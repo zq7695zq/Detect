@@ -1,5 +1,6 @@
 # ffmpeg -f dshow -i video="HP True Vision FHD CameraTools" -s 384*384 -r 24 -vcodec libx264 -rtbufsize 2048M  -preset:v ultrafast -tune:v zerolatency -rtsp_transport tcp -f rtsp rtsp://127.0.0.1:8554/camera_test
 import asyncio
+import os
 
 from hypercorn.asyncio import serve
 from hypercorn.config import Config
@@ -21,7 +22,7 @@ from DetectServer import DetectServer
 #             break
 detect_server = DetectServer()
 detect_server_config = Config()
-detect_server_config.bind = ["127.0.0.1:8010"]
+detect_server_config.bind = ["localhost:8010"]
 
 if __name__ == '__main__':
     # show_images()

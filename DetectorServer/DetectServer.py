@@ -1,182 +1,51 @@
 import base64
 import configparser
+import os
+import re
 import socket
 import time
 import traceback
-from datetime import datetime
 from enum import Enum
 from threading import Thread
 
-from fastapi import FastAPI, Request
-from fastapi.openapi.models import Response
+from fastapi import FastAPI, Request, UploadFile, File, Response
 from fastapi.responses import JSONResponse
-from starlette.responses import StreamingResponse
+from fastapi.middleware.gzip import GZipMiddleware
 
 import RedisTool
-import Reminder
 from Database import db_state, mysql_db_detector
 from Detector import Detector
+from DetectorController import DetectorController
 from DetectorModel.ModelsLoader import ModelsLoader
-from Event import Event
+from DetectorState import DetectorState
 from Events.EventSaver import EventSaver
-from Models import ModelAddReminder
+from Models import ModelAddReminder, ModelIsRecording
 from MoveReminder import MoveReminder
-from NotificationSender import NotiSender
 from PacketModels.Models import ModelDetector, ModelAddDetector, ModelCam2Events, \
     ModelGetEventFrames, ModelDelEvent, ModelGetNotification
 from StreamLive import StreamLive
 from Token import Token
-from WeChat.Database import mysql_db_wechat
 
 
-class detector_state(Enum):
-    running = 1
-    wait_to_stop = 2
-    stoped = 3
-
-    def __init__(self, type):
+def create_reminder_from_db_obj(db_obj, db):
+    init_rect_tuple = tuple(map(int, db_obj['init_rect_str'].split(',')))
+    select_time = db_obj['select_time_str'].total_seconds()
+    ret = None
+    if db_obj['reminder_type'] == 1:
+        ret = MoveReminder(db_obj['start_time'], select_time, init_rect_tuple)
+    elif db_obj['reminder_type'] == 2:
         pass
-
-
-def check_rtsp_connectivity(address):
-    # 解析地址中的主机和端口
-    rtsp_host = address.split("//")[1].split(":")[0]
-    rtsp_port = int(address.split("//")[1].split(":")[1].split("/")[0])
-    # 创建一个socket对象
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-    # 尝试连接到rtsp服务器
-    try:
-        s.connect((rtsp_host, rtsp_port))
-        # 定义一个rtsp请求的消息
-        message = "OPTIONS " + address + " RTSP/1.0\r\nCSeq: 1\r\nUser-Agent: Python\r\n\r\n"
-        # 发送请求
-        s.send(message.encode())
-        # 接收响应
-        response = s.recv(1024)
-        # 判断响应是否为200 OK
-        if response.decode().startswith("RTSP/1.0 200 OK"):
-            # 返回True表示连通
-            return True
-        else:
-            # 返回False表示不连通
-            return False
-    except Exception as e:
-        # 如果发生异常，返回False表示不连通
-        return False
-    finally:
-        # 关闭socket
-        s.close()
-
-
-class Detector_Controller:
-    def __init__(self, detectors, redis, models, db):
-
-        self.redis = redis
-
-        self.models = models
-
-        self.detectors = detectors
-
-        self.db = db
-
-        self.interval_time = 0  # 0.01秒检测一次
-
-        self.detectors_thread = {}
-
-        self.detectors_obj = {}
-
-        self.show_threshold = 20  # 展示动作的阈值 20%
-
-        self.retest_interval_time = 3  # 连通性测试失败时重新测试间隔,
-
-        self.restart_interval_time = 10  # 重启线程间隔
-
-        self.running_cam = {}
-
-        for d in self.detectors:
-            Thread(target=self.append_detector, args=(d, 1), daemon=True).start()
-
-    def append_detector(self, d, count):
-        while True:
-            if count > 3:
-                print("地址：%s 测试连接超过30次，停止测试..." % (d["cam_source"]))
-                return
-            elif count > 1:
-                print("地址：%s 第%s次测试连通性中..." % (d["cam_source"], count))
-
-            if check_rtsp_connectivity(d["cam_source"]):
-                detector = Detector(d["cam_source"],
-                                    d['owner'],
-                                    EventSaver(d["cam_source"], self.redis, d['owner'], self.db),
-                                    self.models,
-                                    self.restart_detector,
-                                    self.interval_time, self.show_threshold)
-                # 加载提醒器
-                detector.reminders = list([crate_reminder_from_db_obj(obj, self.db)
-                                           for obj in
-                                           self.db.get_reminders_by_user_and_cam(d['owner'], d["cam_source"])])
-                self.detectors_obj[d["cam_source"]] = detector
-                self.detectors_thread[d["cam_source"]] = {
-                    'thread': Thread(target=self.update_thread, args=(detector, d["cam_source"]),
-                                     daemon=True),
-                    'state': detector_state.running,
-                    'detector': detector,
-                    'test_time': 0
-                }
-                self.detectors_thread[d["cam_source"]]["thread"].start()
-
-                if self.detectors_thread[d["cam_source"]]["detector"].available:
-                    print("%s连接成功... " % d["cam_source"])
-                    self.running_cam[d["cam_source"]] = True
-                    return
-
-            print("地址：%s 第%s次测试连通性失败，三分钟后重新测试" % (d["cam_source"], count))
-            count += 1
-            time.sleep(self.retest_interval_time)
-
-    def restart_detector(self, detector: Detector, isStarted: bool):
-        if isStarted:
-            self.running_cam.pop(detector.cam_source)
-            # 关闭线程
-            self.detectors_thread[detector.cam_source]['state'] = detector_state.wait_to_stop
-        print('restart_detector : ', detector.cam_source)
-        self.append_detector({'cam_source': detector.cam_source, 'owner': detector.owner}, 1)
-
-    def update_thread(self, detector, cam_source):
-        crycle_count = 0
-        while True:
-            if self.detectors_thread[cam_source]['state'] == detector_state.wait_to_stop:
-                self.detectors_thread[cam_source]['state'] = detector_state.stoped
-                print("%s 断开连接，" % [cam_source])
-                return
-
-            time_start = time.time()
-            try:
-                ret = detector.detect_frame()
-            except Exception as e:
-                print(e)
-                traceback.print_exc()
-            # print("detecting on :" + cam_source + "  event:" + str(ret["event"]))
-            # 每一百帧记录一次帧（充当封面）
-            if crycle_count % 100 == 0:
-                self.redis.set_norm_frame(cam_source, ret['origin_frame'])
-
-            # if not detector.is_available():
-            #     # 重新启动
-            #     self.detectors_thread[cam_source] = Thread(target=self.update_thread,
-            #                                                args=(detector, cam_source), daemon=True).start()
-            #     break
-            # print("run_time:" + str(time.time() - time_start))
-            crycle_count += 1
-            time.sleep(self.interval_time)
+        # ret = MoveReminder(db_obj['start_time'], select_time)
+    ret.db = db
+    ret.reminder_id = db_obj['id']
+    return ret
 
 
 class DetectServer(FastAPI):
 
     def __init__(self, title: str = "Server"):
         super().__init__(title=title)
-
+        self.add_middleware(GZipMiddleware)
         config = configparser.ConfigParser()
         config.read('config.ini')
 
@@ -186,6 +55,9 @@ class DetectServer(FastAPI):
 
         self.Token = Token(config.get("token", "secret_key"))
 
+        self.local_file_address = config.get("rtsp", "local_file_address")
+        self.stream_out_address = config.get("rtsp", "stream_out_address")
+
         self.redis: RedisTool = RedisTool.redis_tool(
             config.get("redis", "host"),
             config.get("redis", "port"),
@@ -194,7 +66,7 @@ class DetectServer(FastAPI):
         self.detectors = []
         self.db.detector_get_by_server(self.server_id, self.detectors)
 
-        self.detector_controller = Detector_Controller(self.detectors, self.redis, ModelsLoader(), self.db)
+        self.detector_controller = DetectorController(self.detectors, self.redis, self.db)
 
         print("DetectorServer加载完成")
         print("detectors : ", self.detectors)
@@ -239,6 +111,7 @@ class DetectServer(FastAPI):
                     d['state'] = "warning" if len(events) > 0 else "norm"
                     if not d['cam_source'] in self.detector_controller.running_cam:
                         d['state'] = "death"
+                    d['nickname'] = base64.b64encode(bytes(d['nickname'], encoding="utf-8"))
                 ret['detectors'] = detectors
             return ret
 
@@ -247,7 +120,7 @@ class DetectServer(FastAPI):
             print('/add_detector')
             payload = self.Token.verify_token(request.headers.get("Authorization"))
             new_detector = {}
-            state = self.db.detector_add(m.cam_source, m.nickname, payload['id'], self.server_id, new_detector)
+            state = self.db.detector_add(m.cam_source, m.nickname, payload['id'], False, self.server_id, new_detector)
             ret = {'state': state.get_value()}
             if state == db_state.detector_add_error_unk:
                 pass
@@ -272,7 +145,8 @@ class DetectServer(FastAPI):
         @self.post('/get_event_frames')
         async def get_event_frames(request: Request, m: ModelGetEventFrames):
             # todo 检查用户符合
-            ret = {'state': 'get_event_frames_success', 'events': self.redis.get_event_frames(m.event_name)}
+            ret = {'state': 'get_event_frames_success', 'events': self.redis.get_event_frames(m.event_name)[1::6]}
+            print('get_event_frames：' + str(len(str(ret))))
             return ret
 
         @self.post('/del_event')
@@ -298,25 +172,36 @@ class DetectServer(FastAPI):
             #
             return ret
 
-        # def generate_frames(cam_source):
-        #     if cam_source in self.detector_controller.detectors_obj and \
-        #             self.detector_controller.detectors_thread[cam_source]['state'] == detector_state.running:
-        #         _detector: Detector = self.detector_controller.detectors_obj.get(cam_source)
-        #         if _detector.post_frames_con.get_stream_len() > 0:
-        #             yield _detector.post_frames_con.pop_frames()
-
         @self.get("/open_video")
         async def open_video(request: Request, cam_source):
             payload = self.Token.verify_token(request.headers.get("Authorization"))
             is_owner = self.db.user_is_owner_cam_source(cam_source, payload['id'])
+            ret = {"success": False,
+                   "address": ""}
             if is_owner:
+                # TODO 临时
                 if cam_source in self.detector_controller.detectors_obj and \
-                        self.detector_controller.detectors_thread[cam_source]['state'] == detector_state.running:
+                        self.detector_controller.detectors_thread[cam_source]['state'] == DetectorState.running:
                     _detector: Detector = self.detector_controller.detectors_obj.get(cam_source)
                     _stream: StreamLive = _detector.cam.stream_live
                     if not _stream.stream_opened:
-                        _stream.open_stream(cam_source)
-                        print("open_video:" + cam_source)
+                        if _detector.is_local_file:
+                            cam_source = self.local_file_address
+                        _stream.open_stream(cam_source, _detector.is_local_file)
+                        print("open_video: %s, is_local_file: %s" % (cam_source, str(_detector.is_local_file)))
+                    else:
+                        print("cam_source: %s had opened!!" % cam_source)
+                    ret['success'] = True
+                    ret['address'] = self.stream_out_address
+                else:
+                    print("open_video error! cam_source: %s, detectors_obj: %s " % (
+                        cam_source, self.detector_controller.detectors_obj))
+                    print("in:" + str(cam_source in self.detector_controller.detectors_obj))
+                    print("state:" + str(self.detector_controller.detectors_thread[cam_source]['state']))
+            else:
+                print("is not owner!!!!")
+            print("open_video res: %s" % str(ret))
+            return ret
 
         @self.get("/keep_video")
         async def keep_video(request: Request, cam_source):
@@ -324,7 +209,7 @@ class DetectServer(FastAPI):
             is_owner = self.db.user_is_owner_cam_source(cam_source, payload['id'])
             if is_owner:
                 if cam_source in self.detector_controller.detectors_obj and \
-                        self.detector_controller.detectors_thread[cam_source]['state'] == detector_state.running:
+                        self.detector_controller.detectors_thread[cam_source]['state'] == DetectorState.running:
                     _detector: Detector = self.detector_controller.detectors_obj.get(cam_source)
                     _stream: StreamLive = _detector.cam.stream_live
                     if _stream.stream_opened:
@@ -337,22 +222,26 @@ class DetectServer(FastAPI):
             is_owner = self.db.user_is_owner_cam_source(m.cam_source, payload['id'])
             if is_owner:
                 if m.cam_source in self.detector_controller.detectors_obj and \
-                        self.detector_controller.detectors_thread[m.cam_source]['state'] == detector_state.running:
+                        self.detector_controller.detectors_thread[m.cam_source]['state'] == DetectorState.running:
                     _detector: Detector = self.detector_controller.detectors_obj.get(m.cam_source)
                     _detector.rect_tracker.add_rect_from_base64_jpg(tuple(m.rect), m.frame)
                     result = self.db.reminder_add(m.reminder_name, m.cam_source, m.select_time
-                                                  , ','.join(str(i) for i in m.rect), payload['id'], m.reminder_type, m.frame)
+                                                  , ','.join(str(i) for i in m.rect), payload['id'], m.reminder_type,
+                                                  m.frame)
                     if 'reminder_id' in result:
+                        newList = list(create_reminder_from_db_obj(obj, self.db)
+                                       for obj in
+                                       self.db.get_reminders_by_user_and_cam(payload['id'],
+                                                                             m.cam_source,
+                                                                             result['reminder_id']))
                         _detector.reminder_lock.acquire()
-                        _detector.reminders += list(crate_reminder_from_db_obj(obj, self.db)
-                                                    for obj in
-                                                    self.db.get_reminders_by_user_and_cam(payload['id'],
-                                                                                          m.cam_source,
-                                                                                          result['reminder_id']))
+                        # 只能添加一个
+                        _detector.reminders = newList
                         _detector.reminder_lock.release()
                         print("add_video_reminder:" + m.cam_source)
                     else:
                         print("add_video_reminder_error")
+
         # @self.get("/video_feed")
         # async def video_feed(request: Request, cam_source):
         #     payload = self.Token.verify_token(request.headers.get("Authorization"))
@@ -366,16 +255,68 @@ class DetectServer(FastAPI):
         #     else:
         #         return "error"
 
+        @self.post("/upload_record")
+        async def upload_record(request: Request, file: UploadFile = File(...)):
+            payload = self.Token.verify_token(request.headers.get("Authorization"))
+            cam_source = request.headers.get("Cam-Source")
+            is_owner = self.db.user_is_owner_cam_source(cam_source, payload['id'])
+            if is_owner:
+                if cam_source in self.detector_controller.detectors_obj and \
+                        self.detector_controller.detectors_thread[cam_source]['state'] == DetectorState.running:
+                    _detector: Detector = self.detector_controller.detectors_obj.get(cam_source)
+                    if not os.path.exists("UploadRecords"):
+                        os.makedirs("UploadRecords")
+                    if not os.path.exists("UploadRecords\\Files"):
+                        os.makedirs("UploadRecords\\Files")
+                    # 临时保存
+                    with open(f"UploadRecords\\Files\\temp_{file.filename}", "wb") as f:
+                        f.write(await file.read())
+                    # TODO 添加到数据库再读取回来
+                    _detector.voice_handler.add_feature(
+                        {
+                            'id': -1,
+                            'name': "test",
+                            'features': _detector.voice_handler.get_voice_feature(
+                                f"UploadRecords\\Files\\temp_{file.filename}"
+                            ),
+                            'type': -1
+                        })
 
-def crate_reminder_from_db_obj(db_obj, db):
-    init_rect_tuple = tuple(map(int, db_obj['init_rect_str'].split(',')))
-    select_time = db_obj['select_time_str'].total_seconds()
-    ret = None
-    if db_obj['reminder_type'] == 1:
-        ret = MoveReminder(db_obj['start_time'], select_time, init_rect_tuple)
-    elif db_obj['reminder_type'] == 2:
-        pass
-        # ret = MoveReminder(db_obj['start_time'], select_time)
-    ret.db = db
-    ret.reminder_id = db_obj['id']
-    return ret
+                    return {"message": "File received and saved temporarily."}
+
+        @self.post("/detect_record")
+        async def detect_record(request: Request, file: UploadFile = File(...)):
+            payload = self.Token.verify_token(request.headers.get("Authorization"))
+            cam_source = request.headers.get("Cam-Source")
+            is_owner = self.db.user_is_owner_cam_source(cam_source, payload['id'])
+            if is_owner:
+                if cam_source in self.detector_controller.detectors_obj and \
+                        self.detector_controller.detectors_thread[cam_source]['state'] == DetectorState.running:
+                    _detector: Detector = self.detector_controller.detectors_obj.get(cam_source)
+                    _detector.gesture_handler.clean_gesture_buff()
+                    if not os.path.exists("UploadRecords"):
+                        os.makedirs("UploadRecords")
+                    if not os.path.exists("UploadRecords\\Files"):
+                        os.makedirs("UploadRecords\\Files")
+                    # 临时保存
+                    with open(f"UploadRecords\\Files\\temp_{file.filename}", "wb") as f:
+                        f.write(await file.read())
+                    detected = _detector.voice_handler.detect_voice(f"UploadRecords\\Files\\temp_{file.filename}")
+                    if detected is None:
+                        return {"state": False,
+                                "message": "No voice has been detected"}
+                    else:
+                        return {"state": True,
+                                "name": detected['name']}
+
+        @self.post("/is_recording")
+        async def is_recording(request: Request, m: ModelIsRecording):
+            payload = self.Token.verify_token(request.headers.get("Authorization"))
+            is_owner = self.db.user_is_owner_cam_source(m.cam_source, payload['id'])
+            if is_owner:
+                if m.cam_source in self.detector_controller.detectors_obj and \
+                        self.detector_controller.detectors_thread[m.cam_source]['state'] == DetectorState.running:
+                    _detector: Detector = self.detector_controller.detectors_obj.get(m.cam_source)
+                    return {'state': _detector.voice_handler.get_is_recording()}
+                else:
+                    return {'state': False}

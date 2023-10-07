@@ -22,7 +22,7 @@ from WeChat.WeChatServer import WeChatServer
 #             break
 login_server = LoginServer()
 login_server_config = Config()
-login_server_config.bind = ["127.0.0.1:8080"]
+login_server_config.bind = ["localhost:8080"]
 
 if __name__ == '__main__':
     # show_images()

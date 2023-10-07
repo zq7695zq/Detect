@@ -38,9 +38,12 @@ class Reminder:
         pass
 
     def track_frame(self, frame, last_rect, human_rects):
-        ret_frame = self.draw(frame, last_rect)
+        ret_frame, color, isWarning = self.draw(frame, last_rect)
+        isMoved = False
         if not self.move_distance == max_num and bbox_distance(self.init_rect, last_rect) > self.move_distance:
             self.rect_moved(frame, last_rect)
+            isWarning = False
+            isMoved = True
         elif not self.in_distance == max_num:
             isRemind = False
             for human_rect in human_rects:
@@ -49,10 +52,11 @@ class Reminder:
                     break
             if isRemind:
                 self.rect_in(frame, last_rect)
-        return ret_frame
+        return ret_frame, color, isWarning, isMoved
 
     def update_start_time(self):
         self.start_time = time.time()
         if self.db is None or self.reminder_id == -1:
+            print("------------------self.db is None or self.reminder_id == -1------------------")
             return
         return self.db.reminder_update_start_time(self.reminder_id)

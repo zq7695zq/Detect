@@ -12,7 +12,7 @@ class EventSaver:
         self.owner = owner
         self.noti_sender = NotiSender(db, owner)
 
-    def addEvent(self, event, frames):
+    def addEvent(self, event, frames, label=''):
         last_event = self.redis.get_last_event(self.cam_source)
         if last_event is None or float(time.time()) - float(last_event['time']) > 3.0:  # 三秒内发生同事件只添加最新一帧
             print("addEvent: " + event.name, "confidence :" + event.confi)
@@ -20,10 +20,12 @@ class EventSaver:
                 print("first frames:")
             else:
                 print(float(time.time()) - float(last_event['time']))
+            if label != '':
+                event.label = label
             self.redis.add_event(self.cam_source, event, frames)
 
             # 添加通知消息
-            self.redis.add_notification(self.cam_source, event)
+            self.redis.add_notification(self.cam_source, event, event.get_action_name())
 
             # 发送提示消息
             # self.noti_sender.send(event.name)

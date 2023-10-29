@@ -7,22 +7,21 @@ import cv2
 import numpy as np
 import torch
 
-import NotificationSender
+import Database
 from CameraTools.CameraLoader import CamLoader_Q
 from DetectorModel.Track.Tracker import Detection
 from DetectorModel.fn import draw_single
-from Events.Event import Event
-from FrameBuffer import FrameBuffer
-from GestureLoader import GestureLoader
-from ModelsLoader import ModelsLoader
-from MoveReminder import MoveReminder
-from PostFramesController import PostFramesController
-from RectTracker import RectTracker
+from Events.Event import Event, get_gesture_by_name, get_action_color, get_action_event
+from CameraTools.FrameBuffer import FrameBuffer
+from DetectorModel.GestureLoader import GestureLoader
+from DetectorModel.ModelsLoader import ModelsLoader
+from CameraTools.RectTracker import RectTracker
 from UploadRecords.VoiceHandler import VoiceHandler
 
 
 class Detector:
-    def __init__(self, cam_source, owner, event_saver, models, restart_callback, show_threshold=25,
+    def __init__(self, detector_id, cam_source, owner, event_saver, models, restart_callback, db: Database,
+                 show_threshold=25,
                  is_local_file=False):
         self.models: ModelsLoader = models
 
@@ -32,11 +31,15 @@ class Detector:
 
         self.models.addPysotModel(cam_source)
 
+        self.detector_id = detector_id
+
         self.started = False  # 是否已经完整走完init
 
         self.available = True  # 是否已经正常启动
 
         self.cam_source = cam_source
+
+        self.db = db
 
         self.owner = owner
 
@@ -77,14 +80,18 @@ class Detector:
         self.last_time_color = (0, 255, 0)
 
         # 音频识别
-        self.voice_handler = VoiceHandler()
+        self.voice_handler = VoiceHandler(self.db, self.detector_id)
 
         self.voice_buffer = FrameBuffer(60)
+
+        self.show_voice_time = time.time()
 
         # 手势识别
         self.gesture_handler = GestureLoader()
 
         self.gesture_buffer = FrameBuffer(60)
+
+        self.frame_count = 0
 
     def error_callback(self, error):
         self.available = False
@@ -109,10 +116,11 @@ class Detector:
         self.stream_opened = False
 
     def detect_frame(self):
-        frame = self.cam.getitem()
+        frame = self.cam.getitem()[0]
         origin_frame = np.copy(frame)
         # Detect humans bbox in the frame with detector model.
         detected = self.models.detect_model.detect(frame, need_resize=False, expand_bb=10)
+
         detected_bbox = []
         if detected is not None:
             detected_bbox = self.convert_to_bbox_array(detected)
@@ -146,7 +154,7 @@ class Detector:
 
         item_event = Event(Event.pending)
         item_frame = np.zeros_like(origin_frame)
-        frame_with_item = np.zeros_like(origin_frame)
+        frame_with_item = None
         # 物品追踪
         if self.rect_tracker.tracker_inited:
             ret_rect = self.rect_tracker.track_frame(origin_frame, item_frame, self.last_time_color)
@@ -195,21 +203,8 @@ class Detector:
                 if out[0].max() * 100 > self.show_threshold:
                     action_name = self.models.action_model.class_names[out[0].argmax()]
                     action = '{}: {:.2f}%'.format(action_name, out[0].max() * 100)
-                    if action_name == 'Fall Down':
-                        clr = (255, 0, 0)
-                        event_action = Event(Event.fall_down)
-                    elif action_name == 'Lying Down':
-                        clr = (255, 200, 0)
-                        event_action = Event(Event.lying_down)
-                    elif action_name == 'Walking':
-                        clr = (255, 100, 0)
-                        event_action = Event(Event.walking)
-                    elif action_name == 'Sitting':
-                        clr = (255, 100, 100)
-                        event_action = Event(Event.sitting)
-                    elif action_name == 'Standing':
-                        clr = (255, 100, 255)
-                        event_action = Event(Event.standing)
+                    clr = get_action_color(action_name)
+                    event_action = get_action_event(action_name)
                     event_action.set_confidence(out[0].max() * 100)
                     # 发生事件处理
                     if event_action == event_action.fall_down:
@@ -239,23 +234,39 @@ class Detector:
         #         self.post_frames_con.clear_steam()
         # Show Frame.
         # frame = cv2.resize(frame, (0, 0), fx=2., fy=2.)
-        event_gesture = Event(Event.pending)
+
         # 手势识别
-        if self.voice_handler.has_feateure():
-            frame, gesture_label = self.gesture_handler.detect_frame(frame, [])
-            if gesture_label != 'unk':
-                self.gesture_handler.next_frame(gesture_label, frame)
-            handle_res = self.gesture_handler.gesture_handle()
-            if handle_res['reliable']:
-                event_gesture = Event.get_gesture_by_name(handle_res['label'])
-                self.event_saver.addEvent(event_gesture, handle_res['frames'])
-                self.voice_handler.set_recording(True)
-                frame = cv2.putText(frame, 'voice recording',
-                                    (120, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1)
-            else:
-                self.voice_handler.set_recording(False)
+        event_gesture = Event(Event.pending)
+        gesture_frame, gesture_label = self.gesture_handler.detect_frame(frame, [])
+        frame_with_gesture = cv2.add(frame, gesture_frame)
+        if gesture_label != 'unk':
+            self.gesture_handler.next_frame(gesture_label)
+        handle_res = self.gesture_handler.gesture_handle()
+        if handle_res['reliable']:
+            self.event_saver.addEvent(get_gesture_by_name(handle_res['label']), self.gesture_buffer.get_frames())
+            # self.voice_handler.set_recording(True)
+        else:
+            pass
+            # self.voice_handler.set_recording(False)
+        self.gesture_buffer.add_frame(frame_with_gesture)
         # 补充事件结束后的一些帧进事件回放
-        self.event_saver.pushMoreFrame(event_gesture, frame, 'gesture')
+        self.event_saver.pushMoreFrame(event_gesture, frame_with_gesture, 'gesture')
+
+        # 语音识别
+        event_voice = Event(Event.pending)
+        if self.frame_count % 100 == 0:
+            voices = self.cam.getVoices()
+            if self.voice_handler.test_voice(voices):
+                # 显示3s
+                self.show_voice_time = time.time() + len(voices) * 30
+                self.voice_handler.detect_voice_new(voices, self.detect_voice_callback)
+
+        if self.show_voice_time > time.time():
+            frame = cv2.putText(frame, 'voice recording',
+                                (120, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1)
+        # 补充事件结束后的一些帧进事件回放
+        self.event_saver.pushMoreFrame(event_voice, frame, 'voice')
+
 
         fps_t = (time.time() - self.fps_time)
         # frame = cv2.putText(frame, '%d, FPS: %f' % (f, 1.0 / fps_t if fps_t != 0 else 1),
@@ -266,16 +277,16 @@ class Detector:
 
         frame = cv2.add(action_frame, frame)
         frame = cv2.add(item_frame, frame)
-
+        # frame = cv2.add(gesture_frame, frame)
         # 是否直播推流
         if self.cam.stream_live.stream_opened and self.cam.stream_live.check_out_of_time():
             self.cam.stream_live.write_frame(frame)
-        # print(self.cam_source + " fps : " + str( 1.0 / fps_t))
         self.fps_time = time.time()
+        self.frame_count += 1
         return {"event_action": event_action,
                 "frame": frame,
                 "origin_frame": origin_frame,
-                "fps": 1.0 / fps_t}
+                "fps": 1.0 / fps_t if fps_t > 0 else 0}
         # cv2.imwrite("./Results/img-" + str(time.time()) + ".jpg", frame)
 
     def image_resize(self, image, width=None, height=None, inter=cv2.INTER_AREA):
@@ -312,7 +323,7 @@ class Detector:
     def preproc(self, image):
         """preprocess function for CameraLoader.
         """
-        image = self.models.resize_fn(image)
+        # image = self.models.resize_fn(image)
         # image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         return image
 
@@ -354,3 +365,8 @@ class Detector:
                 filtered_detections.append(detection)
 
         return filtered_detections
+
+    def detect_voice_callback(self, voice_file_name, label, voices):
+        if len(self.voice_buffer) > 0 :
+            self.event_saver.addEvent(Event.voice, self.voice_buffer.get_frames(), label)
+            print(f"{voice_file_name} 检测到语音{label}！！！")

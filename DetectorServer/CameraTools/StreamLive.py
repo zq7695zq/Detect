@@ -20,7 +20,7 @@ class StreamLive:
                    '-y',
                    '-f', 'rawvideo',
                    '-vcodec', 'rawvideo',
-                   '-pix_fmt', 'bgr24',
+                   '-pix_fmt', 'rgb24',
                    '-s', "{}x{}".format(width, height),
                    '-r', str(fps),
                    '-i', '-',

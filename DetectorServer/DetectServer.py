@@ -1,25 +1,23 @@
 import base64
 import configparser
+import gzip
+import io
+import json
 import os
-import re
-import socket
-import time
-import traceback
-from enum import Enum
-from threading import Thread
+
+from pathlib import Path
 
 from fastapi import FastAPI, Request, UploadFile, File, Response
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from fastapi.middleware.gzip import GZipMiddleware
+from starlette.responses import FileResponse, StreamingResponse
 
 import RedisTool
 from Database import db_state, mysql_db_detector
 from Detector import Detector
 from DetectorController import DetectorController
-from DetectorModel.ModelsLoader import ModelsLoader
 from DetectorState import DetectorState
-from Events.EventSaver import EventSaver
-from Models import ModelAddReminder, ModelIsRecording
+from Models import ModelAddReminder, ModelIsRecording, ModelGetRecords, ModelGetWav, ModelAddVoice
 from MoveReminder import MoveReminder
 from PacketModels.Models import ModelDetector, ModelAddDetector, ModelCam2Events, \
     ModelGetEventFrames, ModelDelEvent, ModelGetNotification
@@ -40,12 +38,11 @@ def create_reminder_from_db_obj(db_obj, db):
     ret.reminder_id = db_obj['id']
     return ret
 
-
 class DetectServer(FastAPI):
 
     def __init__(self, title: str = "Server"):
         super().__init__(title=title)
-        self.add_middleware(GZipMiddleware)
+        # self.add_middleware(GZipMiddleware)
         config = configparser.ConfigParser()
         config.read('config.ini')
 
@@ -107,7 +104,7 @@ class DetectServer(FastAPI):
             elif state == db_state.detector_get_success:
                 for d in detectors:
                     d['image'] = self.redis.get_last_norm_base64(d['cam_source'])
-                    events = self.redis.get_events_by_source(d['cam_source'])
+                    events = self.redis.get_events_by_source(d['cam_source'], 1, 10)
                     d['state'] = "warning" if len(events) > 0 else "norm"
                     if not d['cam_source'] in self.detector_controller.running_cam:
                         d['state'] = "death"
@@ -137,17 +134,16 @@ class DetectServer(FastAPI):
             payload = self.Token.verify_token(request.headers.get("Authorization"))
             is_owner = self.db.user_is_owner_cam_source(m.cam_source, payload['id'])
             if is_owner:
-                ret = {'state': 'cam2events_success', 'events': self.redis.get_events_by_source(m.cam_source)}
+                ret = {'state': 'cam2events_success', 'events': self.redis.get_events_by_source(m.cam_source, int(m.page), 10)}
             else:
                 ret = {'state': 'cam2events_unk'}
-            return ret
+            return Response(content=gzip.compress(json.dumps(jsonable_encoder(ret)).encode()), media_type="application/octet-stream")
 
         @self.post('/get_event_frames')
         async def get_event_frames(request: Request, m: ModelGetEventFrames):
             # todo 检查用户符合
             ret = {'state': 'get_event_frames_success', 'events': self.redis.get_event_frames(m.event_name)[1::6]}
-            print('get_event_frames：' + str(len(str(ret))))
-            return ret
+            return Response(content=gzip.compress(json.dumps(jsonable_encoder(ret)).encode()), media_type="application/octet-stream")
 
         @self.post('/del_event')
         async def del_event(request: Request, m: ModelDelEvent):
@@ -159,17 +155,13 @@ class DetectServer(FastAPI):
         async def get_notification(request: Request, m: ModelGetNotification):
             # todo 检查用户符合
             noti = self.redis.get_notification(m.cam_source)
-            state = 1 if noti is not None else 0
-            notification = ""
-            if state == 1:
-                # 阅后即焚
+            if noti:
                 self.redis.del_notification(m.cam_source)
-                notification = noti["event"].name
             ret = {
-                'notification': notification,
-                'state': state,
+                'notification': noti.get("event", {}).name if noti else "",
+                'state': 1 if noti else 0,
+                'event_name': noti.get("event_name", "") if noti else "",
             }
-            #
             return ret
 
         @self.get("/open_video")
@@ -242,6 +234,51 @@ class DetectServer(FastAPI):
                     else:
                         print("add_video_reminder_error")
 
+        @self.post("/get_records")
+        async def get_records(request: Request, m: ModelGetRecords):
+            payload = self.Token.verify_token(request.headers.get("Authorization"))
+            is_owner = self.db.user_is_owner_cam_source(m.cam_source, payload['id'])
+            if is_owner:
+                if m.cam_source in self.detector_controller.detectors_obj and \
+                        self.detector_controller.detectors_thread[m.cam_source]['state'] == DetectorState.running:
+                    _detector: Detector = self.detector_controller.detectors_obj.get(m.cam_source)
+                    return {'state': True,
+                            'list': _detector.voice_handler.get_voice_files(False)}
+
+            return {'state': False}
+
+        @self.post("/get_wav")
+        async def get_wav(request: Request, m: ModelGetWav):
+            payload = self.Token.verify_token(request.headers.get("Authorization"))
+            is_owner = self.db.user_is_owner_cam_source(m.cam_source, payload['id'])
+            if is_owner and os.path.exists(m.file) and Path(m.file).parent == Path('UploadRecords/Files/'):
+                compressed_data = io.BytesIO()
+
+                # 读取文件并在内存中压缩它
+                with open(m.file, 'rb') as f_in:
+                    with gzip.GzipFile(fileobj=compressed_data, mode='wb') as f_out:
+                        f_out.writelines(f_in)
+
+                compressed_data.seek(0)  # 重置文件指针位置，以便从头开始读取
+
+                # 使用StreamingResponse返回压缩后的数据
+                def file_iterator():
+                    for chunk in iter(lambda: compressed_data.read(4096), b""):
+                        yield chunk
+
+                return StreamingResponse(file_iterator(), media_type="application/gzip", headers={
+                    "Content-Disposition": f"attachment; filename={os.path.basename(m.file)}.gz"})
+            return {"error": "File not found or unauthorized access."}
+        @self.post("/add_voice")
+        async def add_voice(request: Request, m: ModelAddVoice):
+            payload = self.Token.verify_token(request.headers.get("Authorization"))
+            is_owner = self.db.user_is_owner_cam_source(m.cam_source, payload['id'])
+            if is_owner and os.path.exists(m.file):
+                if m.cam_source in self.detector_controller.detectors_obj and \
+                        self.detector_controller.detectors_thread[m.cam_source]['state'] == DetectorState.running:
+                    _detector: Detector = self.detector_controller.detectors_obj.get(m.cam_source)
+                    _detector.voice_handler.save_feature_from_file(m.label, m.file)
+            return {"error": "File not found or unauthorized access."}
         # @self.get("/video_feed")
         # async def video_feed(request: Request, cam_source):
         #     payload = self.Token.verify_token(request.headers.get("Authorization"))
@@ -255,68 +292,68 @@ class DetectServer(FastAPI):
         #     else:
         #         return "error"
 
-        @self.post("/upload_record")
-        async def upload_record(request: Request, file: UploadFile = File(...)):
-            payload = self.Token.verify_token(request.headers.get("Authorization"))
-            cam_source = request.headers.get("Cam-Source")
-            is_owner = self.db.user_is_owner_cam_source(cam_source, payload['id'])
-            if is_owner:
-                if cam_source in self.detector_controller.detectors_obj and \
-                        self.detector_controller.detectors_thread[cam_source]['state'] == DetectorState.running:
-                    _detector: Detector = self.detector_controller.detectors_obj.get(cam_source)
-                    if not os.path.exists("UploadRecords"):
-                        os.makedirs("UploadRecords")
-                    if not os.path.exists("UploadRecords\\Files"):
-                        os.makedirs("UploadRecords\\Files")
-                    # 临时保存
-                    with open(f"UploadRecords\\Files\\temp_{file.filename}", "wb") as f:
-                        f.write(await file.read())
-                    # TODO 添加到数据库再读取回来
-                    _detector.voice_handler.add_feature(
-                        {
-                            'id': -1,
-                            'name': "test",
-                            'features': _detector.voice_handler.get_voice_feature(
-                                f"UploadRecords\\Files\\temp_{file.filename}"
-                            ),
-                            'type': -1
-                        })
-
-                    return {"message": "File received and saved temporarily."}
-
-        @self.post("/detect_record")
-        async def detect_record(request: Request, file: UploadFile = File(...)):
-            payload = self.Token.verify_token(request.headers.get("Authorization"))
-            cam_source = request.headers.get("Cam-Source")
-            is_owner = self.db.user_is_owner_cam_source(cam_source, payload['id'])
-            if is_owner:
-                if cam_source in self.detector_controller.detectors_obj and \
-                        self.detector_controller.detectors_thread[cam_source]['state'] == DetectorState.running:
-                    _detector: Detector = self.detector_controller.detectors_obj.get(cam_source)
-                    _detector.gesture_handler.clean_gesture_buff()
-                    if not os.path.exists("UploadRecords"):
-                        os.makedirs("UploadRecords")
-                    if not os.path.exists("UploadRecords\\Files"):
-                        os.makedirs("UploadRecords\\Files")
-                    # 临时保存
-                    with open(f"UploadRecords\\Files\\temp_{file.filename}", "wb") as f:
-                        f.write(await file.read())
-                    detected = _detector.voice_handler.detect_voice(f"UploadRecords\\Files\\temp_{file.filename}")
-                    if detected is None:
-                        return {"state": False,
-                                "message": "No voice has been detected"}
-                    else:
-                        return {"state": True,
-                                "name": detected['name']}
-
-        @self.post("/is_recording")
-        async def is_recording(request: Request, m: ModelIsRecording):
-            payload = self.Token.verify_token(request.headers.get("Authorization"))
-            is_owner = self.db.user_is_owner_cam_source(m.cam_source, payload['id'])
-            if is_owner:
-                if m.cam_source in self.detector_controller.detectors_obj and \
-                        self.detector_controller.detectors_thread[m.cam_source]['state'] == DetectorState.running:
-                    _detector: Detector = self.detector_controller.detectors_obj.get(m.cam_source)
-                    return {'state': _detector.voice_handler.get_is_recording()}
-                else:
-                    return {'state': False}
+        # @self.post("/upload_record")
+        # async def upload_record(request: Request, file: UploadFile = File(...)):
+        #     payload = self.Token.verify_token(request.headers.get("Authorization"))
+        #     cam_source = request.headers.get("Cam-Source")
+        #     is_owner = self.db.user_is_owner_cam_source(cam_source, payload['id'])
+        #     if is_owner:
+        #         if cam_source in self.detector_controller.detectors_obj and \
+        #                 self.detector_controller.detectors_thread[cam_source]['state'] == DetectorState.running:
+        #             _detector: Detector = self.detector_controller.detectors_obj.get(cam_source)
+        #             if not os.path.exists("UploadRecords"):
+        #                 os.makedirs("UploadRecords")
+        #             if not os.path.exists("UploadRecords\\Files"):
+        #                 os.makedirs("UploadRecords\\Files")
+        #             # 临时保存
+        #             with open(f"UploadRecords\\Files\\temp_{file.filename}", "wb") as f:
+        #                 f.write(await file.read())
+        #             # TODO 添加到数据库再读取回来
+        #             _detector.voice_handler.add_feature(
+        #                 {
+        #                     'id': -1,
+        #                     'name': "test",
+        #                     'features': _detector.voice_handler.get_voice_feature(
+        #                         f"UploadRecords\\Files\\temp_{file.filename}"
+        #                     ),
+        #                     'type': -1
+        #                 })
+        #
+        #             return {"message": "File received and saved temporarily."}
+        #
+        # @self.post("/detect_record")
+        # async def detect_record(request: Request, file: UploadFile = File(...)):
+        #     payload = self.Token.verify_token(request.headers.get("Authorization"))
+        #     cam_source = request.headers.get("Cam-Source")
+        #     is_owner = self.db.user_is_owner_cam_source(cam_source, payload['id'])
+        #     if is_owner:
+        #         if cam_source in self.detector_controller.detectors_obj and \
+        #                 self.detector_controller.detectors_thread[cam_source]['state'] == DetectorState.running:
+        #             _detector: Detector = self.detector_controller.detectors_obj.get(cam_source)
+        #             _detector.gesture_handler.clean_gesture_buff()
+        #             if not os.path.exists("UploadRecords"):
+        #                 os.makedirs("UploadRecords")
+        #             if not os.path.exists("UploadRecords\\Files"):
+        #                 os.makedirs("UploadRecords\\Files")
+        #             # 临时保存
+        #             with open(f"UploadRecords\\Files\\temp_{file.filename}", "wb") as f:
+        #                 f.write(await file.read())
+        #             detected = _detector.voice_handler.detect_voice(f"UploadRecords\\Files\\temp_{file.filename}")
+        #             if detected is None:
+        #                 return {"state": False,
+        #                         "message": "No voice has been detected"}
+        #             else:
+        #                 return {"state": True,
+        #                         "name": detected['name']}
+        #
+        # @self.post("/is_recording")
+        # async def is_recording(request: Request, m: ModelIsRecording):
+        #     payload = self.Token.verify_token(request.headers.get("Authorization"))
+        #     is_owner = self.db.user_is_owner_cam_source(m.cam_source, payload['id'])
+        #     if is_owner:
+        #         if m.cam_source in self.detector_controller.detectors_obj and \
+        #                 self.detector_controller.detectors_thread[m.cam_source]['state'] == DetectorState.running:
+        #             _detector: Detector = self.detector_controller.detectors_obj.get(m.cam_source)
+        #             return {'state': _detector.voice_handler.get_is_recording()}
+        #         else:
+        #             return {'state': False}

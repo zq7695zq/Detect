@@ -23,6 +23,7 @@ class ModelAddDetector(BaseModel):
 
 class ModelCam2Events(BaseModel):
     cam_source: str
+    page: int
 
 
 class ModelGetEventFrames(BaseModel):
@@ -49,3 +50,16 @@ class ModelIsRecording(BaseModel):
 
 class ModelGetNotification(BaseModel):
     cam_source: str
+
+
+class ModelGetRecords(BaseModel):
+    cam_source: str
+
+class ModelGetWav(BaseModel):
+    cam_source: str
+    file: str
+
+class ModelAddVoice(BaseModel):
+    cam_source: str
+    file: str
+    label: str

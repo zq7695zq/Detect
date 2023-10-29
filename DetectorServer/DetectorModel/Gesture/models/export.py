@@ -16,12 +16,12 @@ from torch.utils.mobile_optimizer import optimize_for_mobile
 FILE = Path(__file__).absolute()
 sys.path.append(FILE.parents[1].as_posix())  # add yolov5/ to path
 
-from models.common import Conv
-from models.yolo import Detect
-from models.experimental import attempt_load
-from utils.activations import Hardswish, SiLU
-from utils.general import colorstr, check_img_size, check_requirements, file_size, set_logging
-from utils.torch_utils import select_device
+from DetectorModel.Gesture.models.common import Conv
+from DetectorModel.Gesture.models.yolo import Detect
+from DetectorModel.Gesture.models.experimental import attempt_load
+from DetectorModel.Gesture.utils.activations import Hardswish, SiLU
+from DetectorModel.Gesture.utils.general import colorstr, check_img_size, check_requirements, file_size, set_logging
+from DetectorModel.Gesture.utils.torch_utils import select_device
 
 
 def export(weights='./yolov5s.pt',  # weights path

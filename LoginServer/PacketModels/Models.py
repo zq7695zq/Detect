@@ -23,6 +23,7 @@ class ModelAddDetector(BaseModel):
 
 class ModelCam2Events(BaseModel):
     cam_source: str
+    page: int
 
 
 class ModelGetEventFrames(BaseModel):
@@ -33,8 +34,10 @@ class ModelDelEvent(BaseModel):
     event_name: str
     cam_source: str
 
+
 class ModelGetNotification(BaseModel):
     cam_source: str
+
 
 class ModelAuthentication(BaseModel):
     ip: str

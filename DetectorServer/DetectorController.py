@@ -109,16 +109,17 @@ class DetectorController:
                 return
             elif count > 1:
                 print("地址：%s 第%s次测试连通性中..." % (d["cam_source"], count))
-
             # 检查rtsp连通性
-            if (~d['is_local_file'] and validate_rtsp_address(d["cam_source"]) and check_rtsp_connectivity(
-                    d["cam_source"])) or \
+            if (not d['is_local_file'] and validate_rtsp_address(d["cam_source"]) and check_rtsp_connectivity(
+                    d['cam_source'])) or \
                     (d['is_local_file'] and check_local_file_exist(d['cam_source'])):  # 检查本地视频是否存在
-                detector = Detector(d["cam_source"],
+                detector = Detector(d['id'],
+                                    d['cam_source'],
                                     d['owner'],
                                     EventSaver(d["cam_source"], self.redis, d['owner'], self.db),
                                     self.models,
                                     self.restart_detector,
+                                    self.db,
                                     self.show_threshold,
                                     d['is_local_file'])
                 # 加载提醒器
@@ -134,7 +135,6 @@ class DetectorController:
                     'test_time': 0
                 }
                 self.detectors_thread[d["cam_source"]]["thread"].start()
-
                 if self.detectors_thread[d["cam_source"]]["detector"].available:
                     print("%s连接成功... " % d["cam_source"])
                     self.running_cam[d["cam_source"]] = True
@@ -158,7 +158,6 @@ class DetectorController:
         cycle_count = 0
 
         # prof = Profile()
-
         while True:
             if self.detectors_thread[cam_source]['state'] == DetectorState.wait_to_stop:
                 self.detectors_thread[cam_source]['state'] = DetectorState.stoped
@@ -168,22 +167,22 @@ class DetectorController:
             time_start = time.time()
             try:
                 ret = detector.detect_frame()
+                # print("detecting on :" + cam_source + "  event:" + str(ret["event"]))
+                # 每一百帧记录一次帧（充当封面）
+                if cycle_count % 300 == 0:
+                    self.redis.set_norm_frame(cam_source, ret['origin_frame'])
+                    # prof.dump_stats("prof-" + str(time.time()) + ".prof")
+                # interval_time = (ret['fps'] - self.max_fps) * (1/self.max_fps)
+                print(f"fps: {ret['fps']}", end='\r')
+                # if not detector.is_available():
+                #     # 重新启动
+                #     self.detectors_thread[cam_source] = Thread(target=self.update_thread,
+                #                                                args=(detector, cam_source), daemon=True).start()
+                #     break
+                # print("run_time:" + str(time.time() - time_start))
+                cycle_count += 1
+                # print('sleep' + str(interval_time))
+                # time.sleep(0 if interval_time < 0 else interval_time)
             except Exception as e:
                 print(e)
                 traceback.print_exc()
-            # print("detecting on :" + cam_source + "  event:" + str(ret["event"]))
-            # 每一百帧记录一次帧（充当封面）
-            if cycle_count % 300 == 0:
-                self.redis.set_norm_frame(cam_source, ret['origin_frame'])
-                # prof.dump_stats("prof-" + str(time.time()) + ".prof")
-            interval_time = (ret['fps'] - self.max_fps) * (1/self.max_fps)
-            # if not detector.is_available():
-            #     # 重新启动
-            #     self.detectors_thread[cam_source] = Thread(target=self.update_thread,
-            #                                                args=(detector, cam_source), daemon=True).start()
-            #     break
-            # print("run_time:" + str(time.time() - time_start))
-            cycle_count += 1
-            # print('sleep' + str(interval_time))
-            time.sleep(0 if interval_time < 0 else interval_time)
-

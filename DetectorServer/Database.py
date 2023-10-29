@@ -1,4 +1,5 @@
 # 导入pymysql
+import pickle
 import time
 from datetime import datetime
 from enum import Enum
@@ -384,88 +385,6 @@ class mysql_db_detector():
             else:
                 return db_state.server_get_success
 
-    def server_get_all(self, ret):
-        conn = self.pool.connection()
-        # 打开数据库可能会有风险，所以添加异常捕捉
-        try:
-            with conn.cursor() as cursor:
-                # 准备SQL语句
-                sql = """
-                     SELECT * FROM servers
-                     """
-                # 执行SQL语句
-                cursor.execute(sql)
-                # 执行完SQL语句后的返回结果都是保存在cursor中
-                # 所以要从cursor中获取全部数据
-                datas = cursor.fetchall()
-                # 查出当前查询的列名，保存到columns
-                columns = [column[0] for column in cursor.description]
-                for row in datas:
-                    ret.append(dict(zip(columns, row)))
-        except Exception as e:
-            print("detector_get_all-数据库操作异常：\n", e)
-        finally:
-            # 不管成功还是失败，都要关闭数据库连接
-            cursor.close()
-            conn.close()
-            if len(datas) == 0:
-                return db_state.server_get_success
-            else:
-                return db_state.server_get_success
-
-    def server_get_users_by_server_id(self, server_id, ret):
-        conn = self.pool.connection()
-        # 打开数据库可能会有风险，所以添加异常捕捉
-        try:
-            with conn.cursor() as cursor:
-                # 准备SQL语句
-                sql = """
-                        select * from user 
-                            where 
-                                id = (select user_id from user_server where server_id = %s)
-                        """
-                # 执行SQL语句
-                cursor.execute(sql, [server_id])
-                # 执行完SQL语句后的返回结果都是保存在cursor中
-                # 所以要从cursor中获取全部数据
-                datas = cursor.fetchall()
-                # 查出当前查询的列名，保存到columns
-                columns = [column[0] for column in cursor.description]
-                for row in datas:
-                    ret.update(dict(zip(columns, row)))
-        except Exception as e:
-            print("server_get_users_by_server_id-数据库操作异常：\n", e)
-        finally:
-            # 不管成功还是失败，都要关闭数据库连接
-            cursor.close()
-            conn.close()
-            if len(datas) == 0:
-                return db_state.user_info_unk_error
-            else:
-                return db_state.user_info_success
-
-    def server_get_user_count(self, server_id):
-        conn = self.pool.connection()
-        # 打开数据库可能会有风险，所以添加异常捕捉
-        try:
-            with conn.cursor() as cursor:
-                # 准备SQL语句
-                sql = """
-                        select count(*) from user_server where server_id = %s
-                        """
-                # 执行SQL语句
-                cursor.execute(sql, [server_id])
-                # 执行完SQL语句后的返回结果都是保存在cursor中
-                # 所以要从cursor中获取全部数据
-                count = cursor.fetchone()
-        except Exception as e:
-            print("server_get_user_count-数据库操作异常：\n", e)
-        finally:
-            # 不管成功还是失败，都要关闭数据库连接
-            cursor.close()
-            conn.close()
-            return count
-
     def user_is_bound(self, user_id):
         is_bound = False
         conn = self.pool.connection()
@@ -554,7 +473,7 @@ class mysql_db_detector():
         try:
             with conn.cursor() as cursor:
                 # 准备SQL语句
-                sql = "DELETE FROM reminder WHERE reminder_id = %s"
+                sql = "DELETE FROM reminder WHERE id = %s"
                 # 执行SQL语句
                 cursor.execute(sql, [reminder_id])
                 # 提交事务
@@ -630,3 +549,62 @@ class mysql_db_detector():
             # 不管成功还是失败，都要关闭数据库连接
             cursor.close()
             conn.close()
+
+    def save_feature(self, detector_id, label, file_name, feature):
+        conn = self.pool.connection()
+        # 打开数据库可能会有风险，所以添加异常捕捉
+        record = None
+        try:
+            with conn.cursor() as cursor:
+                # 准备SQL语句
+                sql = "INSERT INTO detector_records (detector_id, label, file_name, data) VALUES (%s, %s, %s, %s)"
+                # 将特征数据转化为二进制格式
+                feature_data = pickle.dumps(feature)
+                # 执行SQL语句
+                cursor.execute(sql, [detector_id, label, file_name, feature_data])
+                # 提交事务
+                conn.commit()
+                record = {
+                    'id': cursor.lastrowid,
+                    'detector_id': detector_id,
+                    'label': label,
+                    'file_name': file_name,
+                    'feature': feature,
+                }
+        except Exception as e:
+            print("save_feature-数据库操作异常：\n", e)
+        finally:
+            # 不管成功还是失败，都要关闭数据库连接
+            cursor.close()
+            conn.close()
+        return record
+
+    def load_records(self, detector_id):
+        conn = self.pool.connection()
+        records = []
+        # 打开数据库可能会有风险，所以添加异常捕捉
+        try:
+            with conn.cursor() as cursor:
+                # 准备SQL语句
+                sql = "SELECT * FROM detector_records WHERE detector_id = %s"
+                # 执行SQL语句
+                cursor.execute(sql, [detector_id])
+                # 获取查询结果
+                results = cursor.fetchall()
+                for row in results:
+                    _id, detector_id, label, file_name, data = row
+                    # Create a reminder dictionary and add it to the list
+                    records.append({
+                        'id': _id,
+                        'detector_id': detector_id,
+                        'label': label,
+                        'file_name': file_name,
+                        'feature': pickle.loads(data),
+                    })
+        except Exception as e:
+            print("load_records-数据库操作异常：\n", e)
+        finally:
+            # 不管成功还是失败，都要关闭数据库连接
+            cursor.close()
+            conn.close()
+        return records

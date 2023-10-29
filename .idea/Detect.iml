@@ -9,13 +9,11 @@
       <sourceFolder url="file://$MODULE_DIR$/DetectorServer/PacketModels" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/LoginServer" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/DetectorServer/Notification" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/DetectorServer/DetectorModel/Gesture" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/DetectorServer/DetectorModel/Gesture/models" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/DetectorServer/DetectorModel/Gesture/utils" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/DetectorServer/DetectorModel/Models/pysot" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/DetectorServer/DetectorModel/Models" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/DetectorServer/DetectorModel/Models/yolo-gesture" isTestSource="false" />
-      <excludeFolder url="file://$MODULE_DIR$/DetectorServer/DetectorModel/Models/TSSTG" />
-      <excludeFolder url="file://$MODULE_DIR$/DetectorServer/DetectorModel/Models/sppe" />
-      <excludeFolder url="file://$MODULE_DIR$/DetectorServer/DetectorModel/Models/yolo-tiny-onecls" />
-      <excludeFolder url="file://$MODULE_DIR$/DetectorServer/Results" />
+      <sourceFolder url="file://$MODULE_DIR$/DetectorServer/DetectorModel/Pysot" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/venv" />
     </content>
     <orderEntry type="jdk" jdkName="Python 3.9 (venv) (5)" jdkType="Python SDK" />
@@ -31,7 +29,12 @@
   <component name="PyNamespacePackagesService">
     <option name="namespacePackageFolders">
       <list>
-        <option value="$MODULE_DIR$/DetectorServer" />
+        <option value="$MODULE_DIR$/DetectorServer/DetectorModel/Actionsrecognition" />
+        <option value="$MODULE_DIR$/DetectorServer/DetectorModel/Track" />
+        <option value="$MODULE_DIR$/DetectorServer/DetectorModel/Detection" />
+        <option value="$MODULE_DIR$/DetectorServer/DetectorModel/SPPE" />
+        <option value="$MODULE_DIR$/DetectorServer/DetectorModel/Pysot" />
+        <option value="$MODULE_DIR$/DetectorServer/DetectorModel/Models" />
       </list>
     </option>
   </component>

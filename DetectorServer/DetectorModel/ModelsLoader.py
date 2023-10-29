@@ -1,6 +1,6 @@
 import argparse
 
-from ActionsEstLoader import TSSTG
+from DetectorModel.ActionsEstLoader import TSSTG
 from Detection.Utils import ResizePadding
 from DetectorLoader import TinyYOLOv3_onecls
 from PoseEstimateLoader import SPPE_FastPose

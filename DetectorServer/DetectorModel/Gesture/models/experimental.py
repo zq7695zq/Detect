@@ -1,12 +1,16 @@
 # YOLOv5 experimental modules
+import sys
+from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn as nn
 
-from models.common import Conv, DWConv
-from utils.google_utils import attempt_download
+from DetectorModel.Gesture.models.common import Conv, DWConv
+from DetectorModel.Gesture.utils.google_utils import attempt_download
 
+FILE = Path(__file__).absolute()
+sys.path.insert(0, FILE.parents[1].as_posix())
 
 class CrossConv(nn.Module):
     # Cross Convolution Downsample
@@ -111,13 +115,21 @@ class Ensemble(nn.ModuleList):
 
 
 def attempt_load(weights, map_location=None, inplace=True):
-    from models.yolo import Detect, Model
-
+    from DetectorModel.Gesture.models.yolo import Detect, Model
     # Loads an ensemble of models weights=[a,b,c] or a single model weights=[a] or weights=a
+
+
     model = Ensemble()
     for w in weights if isinstance(weights, list) else [weights]:
-        ckpt = torch.load(attempt_download(w), map_location=map_location)  # load
-        model.append(ckpt['ema' if ckpt.get('ema') else 'model'].float().fuse().eval())  # FP32 model
+
+        if w.endswith('pt'):
+            ckpt = torch.load(attempt_download(w), map_location=map_location)  # load
+            model.append(ckpt['ema' if ckpt.get('ema') else 'model'].float().fuse().eval())  # FP32 model
+        else:
+            ckpt = Model("yolov5s.yaml", 3, 12, None).to("cpu")
+            ckpt.load_state_dict(torch.load(weights, map_location=map_location))
+            ckpt.eval()
+            model.append(ckpt)
 
     # Compatibility updates
     for m in model.modules():

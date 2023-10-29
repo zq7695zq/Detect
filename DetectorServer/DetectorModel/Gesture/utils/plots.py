@@ -16,8 +16,8 @@ import torch
 import yaml
 from PIL import Image, ImageDraw, ImageFont
 
-from utils.general import xywh2xyxy, xyxy2xywh
-from utils.metrics import fitness
+from DetectorModel.Gesture.utils.general import xywh2xyxy, xyxy2xywh
+from DetectorModel.Gesture.utils.metrics import fitness
 
 # Settings
 matplotlib.rc('font', **{'size': 11})
